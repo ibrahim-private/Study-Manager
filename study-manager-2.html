@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مكتبة الدراسة</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
+
+:root{
+  --bg:#0A0D14;
+  --surface:#12161F;
+  --surface-2:#171C27;
+  --surface-3:#1E2430;
+  --border:#262C3A;
+  --border-soft:#1B2130;
+  --text:#E7EAF0;
+  --muted:#8891A3;
+  --faint:#565E70;
+  --accent:#6D5EF0;
+  --accent-soft:rgba(109,94,240,0.14);
+  --success:#35D0A0;
+  --success-soft:rgba(53,208,160,0.14);
+  --warning:#F5A623;
+}
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(109,94,240,0.10), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(53,208,160,0.06), transparent 60%),
+    var(--bg);
+  color:var(--text);
+  font-family:'Cairo',sans-serif;
+  min-height:100vh;
+}
+.mono{ font-family:'IBM Plex Mono',monospace; }
+::-webkit-scrollbar{ width:9px; height:9px; }
+::-webkit-scrollbar-track{ background:transparent; }
+::-webkit-scrollbar-thumb{ background:#242A38; border-radius:8px; }
+::-webkit-scrollbar-thumb:hover{ background:#303748; }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+
+.ring{ border-radius:50%; display:flex; align-items:center; justify-content:center; position:relative; }
+.ring::before{
+  content:'';
+  position:absolute; inset:0; border-radius:50%;
+  background:conic-gradient(var(--ring-color,var(--accent)) calc(var(--pct,0)*1%), var(--border) 0);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - var(--thick,8px)), #000 calc(100% - var(--thick,8px)));
+  mask:radial-gradient(farthest-side, transparent calc(100% - var(--thick,8px)), #000 calc(100% - var(--thick,8px)));
+}
+.sidebar-item{ transition: background .15s ease, border-color .15s ease; border-right:3px solid transparent; }
+.sidebar-item[data-active="true"]{ background:var(--surface-3); border-right-color:var(--accent); }
+.sidebar-item:hover{ background:var(--surface-2); }
+.file-row, .folder-card{ transition: background .12s ease, border-color .12s ease; }
+.file-row:hover{ background:var(--surface-2); }
+.folder-card:hover{ background:var(--surface-2); border-color:var(--accent) !important; }
+.check-btn{
+  width:22px; height:22px; border-radius:7px; border:1.8px solid var(--faint);
+  display:flex; align-items:center; justify-content:center;
+  transition: all .15s ease; flex-shrink:0; cursor:pointer;
+}
+.check-btn[data-done="true"]{ background:var(--success); border-color:var(--success); }
+.badge{ font-size:11.5px; padding:3px 9px; border-radius:20px; font-weight:600; white-space:nowrap; }
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(6,7,11,0.72); backdrop-filter:blur(3px);
+  display:flex; align-items:center; justify-content:center; z-index:50; animation:fadeIn .15s ease; padding:16px;
+}
+@keyframes fadeIn{ from{opacity:0} to{opacity:1} }
+.modal-card{ animation:slideUp .18s ease; }
+@keyframes slideUp{ from{opacity:0; transform:translateY(10px)} to{opacity:1; transform:translateY(0)} }
+.field-input{
+  background:var(--surface-3); border:1px solid var(--border); border-radius:10px; padding:10px 12px;
+  color:var(--text); font-family:'Cairo',sans-serif; width:100%; font-size:14px;
+}
+.field-input:focus{ border-color:var(--accent); }
+.field-input::placeholder{ color:var(--faint); }
+textarea.field-input{ resize:vertical; min-height:60px; font-size:13px; }
+.swatch{ width:26px; height:26px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition:transform .12s ease; }
+.swatch[data-selected="true"]{ transform:scale(1.18); border-color:#fff; }
+.btn-primary{ background:var(--accent); color:#fff; border-radius:10px; font-weight:700; padding:10px 18px; transition:filter .15s ease; font-size:14px; border:none; cursor:pointer; }
+.btn-primary:hover{ filter:brightness(1.1); }
+.btn-ghost{ background:var(--surface-3); color:var(--muted); border-radius:10px; font-weight:600; padding:10px 18px; transition:background .15s ease; font-size:14px; border:none; cursor:pointer; }
+.btn-ghost:hover{ background:var(--border); color:var(--text); }
+.cat-pill{ border-radius:10px; padding:8px 10px; font-size:13px; font-weight:600; cursor:pointer; border:1.5px solid var(--border); transition:all .12s ease; text-align:center; }
+.cat-pill[data-selected="true"]{ border-color:var(--accent); background:var(--accent-soft); color:#fff; }
+.hover-actions{ opacity:0; transition:opacity .12s ease; }
+.file-row:hover .hover-actions{ opacity:1; }
+.dash-card{ background:var(--surface); border:1px solid var(--border-soft); border-radius:16px; }
+.tab-btn{ padding:9px 18px; border-radius:10px; font-weight:700; font-size:13.5px; cursor:pointer; transition:all .15s ease; display:flex; align-items:center; gap:7px; }
+.tab-btn[data-active="true"]{ background:var(--accent); color:#fff; }
+.tab-btn[data-active="false"]{ background:none; color:var(--muted); }
+.tab-btn[data-active="false"]:hover{ background:var(--surface-3); color:var(--text); }
+.note-box{ background:var(--surface-3); border:1px dashed var(--border); border-radius:9px; padding:8px 10px; font-size:12.5px; color:var(--muted); margin-top:7px; cursor:text; white-space:pre-wrap; }
+.import-row{ display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:9px; }
+
+.explorer-row{ display:flex; gap:16px; align-items:flex-start; }
+.explorer-sidebar{ width:230px; }
+
+@media (max-width:720px){
+  .explorer-row{ flex-direction:column; }
+  .explorer-sidebar{ width:100%; }
+}
+.import-row:hover{ background:var(--surface-3); }
+.crumb{ color:var(--muted); cursor:pointer; }
+.crumb:hover{ color:var(--text); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ---------------- constants ---------------- */
+const CATEGORY_COLORS = { 'منصة': '#5AA9E6', 'واجب PDF': '#F2795B', 'مراجعة': '#B98BF0' };
+const SUBJECT_PALETTE = ['#6D5EF0','#35D0A0','#F2795B','#5AA9E6','#F5A623','#B98BF0','#EC7BB0','#4FD1C5'];
+const STORAGE_KEY = 'study-data-v3';
+
+/* ---------------- state ---------------- */
+let state = {
+  subjects: [],   // {id,name,color,folders:[{id,name,files:[...],folders:[...nested...]}]}
+  tasks: [],      // {id, subjectId, folderId, fileId}
+  history: [],    // {id, date:'YYYY-MM-DD', time:'HH:MM', fileId, title, category, subjectName, subjectColor, folderName}
+  view: 'home',   // 'home' | 'explorer' | 'history'
+  selectedSubjectId: null,
+  folderPath: [],  // array of folder ids, from subject root down to the currently open folder
+  modal: null,
+  loaded: false
+};
+
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function esc(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function seedData(){
+  const subjects = [
+    { id: uid(), name:'فيزياء', color:'#6D5EF0', folders:[
+      { id: uid(), name:'المحاضرات', folders:[], files:[
+        {id:uid(), title:'الدرس الأول - قوانين نيوتن للحركة', category:'منصة', link:'https://example.com/lesson1', pdfLink:'', note:'', done:true},
+        {id:uid(), title:'الدرس الثاني - الطاقة والشغل', category:'منصة', link:'', pdfLink:'', note:'', done:false}
+      ]},
+      { id: uid(), name:'الواجبات', folders:[], files:[
+        {id:uid(), title:'واجب الفصل الثاني', category:'واجب PDF', link:'', pdfLink:'https://example.com/hw2.pdf', note:'راجع مسألة 5 كويس', done:false}
+      ]}
+    ]},
+    { id: uid(), name:'كيمياء', color:'#35D0A0', folders:[
+      { id: uid(), name:'المحاضرات', folders:[], files:[
+        {id:uid(), title:'الروابط الكيميائية - شرح', category:'منصة', link:'https://example.com/bonds', pdfLink:'', note:'', done:true}
+      ]}
+    ]}
+  ];
+  const tasks = [
+    {id:uid(), subjectId: subjects[0].id, folderId: subjects[0].folders[0].id, fileId: subjects[0].folders[0].files[0].id},
+    {id:uid(), subjectId: subjects[0].id, folderId: subjects[0].folders[1].id, fileId: subjects[0].folders[1].files[0].id},
+    {id:uid(), subjectId: subjects[1].id, folderId: subjects[1].folders[0].id, fileId: subjects[1].folders[0].files[0].id}
+  ];
+  const history = [
+    {id:uid(), date: todayStr(), time: new Date().toTimeString().slice(0,5), fileId: subjects[0].folders[0].files[0].id, title: subjects[0].folders[0].files[0].title, category: subjects[0].folders[0].files[0].category, subjectName: subjects[0].name, subjectColor: subjects[0].color, folderName: subjects[0].folders[0].name},
+    {id:uid(), date: todayStr(), time: new Date().toTimeString().slice(0,5), fileId: subjects[1].folders[0].files[0].id, title: subjects[1].folders[0].files[0].title, category: subjects[1].folders[0].files[0].category, subjectName: subjects[1].name, subjectColor: subjects[1].color, folderName: subjects[1].folders[0].name}
+  ];
+  return {subjects, tasks, history};
+}
+
+/* ---------------- date helpers ---------------- */
+function todayStr(){
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function todayFormatted(){
+  const d = new Date();
+  try{ return d.toLocaleDateString('ar-EG', { weekday:'long', year:'numeric', month:'long', day:'numeric' }); }
+  catch(e){ return d.toLocaleDateString(); }
+}
+
+/* ---------------- local storage (persists in the browser, per device) ---------------- */
+function loadData(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      state.subjects = parsed.subjects || [];
+      state.tasks = parsed.tasks || [];
+      state.history = parsed.history || [];
+    } else {
+      const seed = seedData();
+      state.subjects = seed.subjects; state.tasks = seed.tasks; state.history = seed.history || [];
+      saveData();
+    }
+  }catch(e){
+    console.error('load failed', e);
+    const seed = seedData();
+    state.subjects = seed.subjects; state.tasks = seed.tasks; state.history = seed.history || [];
+    try{ saveData(); }catch(e2){}
+  }
+  state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
+  state.folderPath = [];
+  state.loaded = true;
+  render();
+}
+function saveData(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({subjects:state.subjects, tasks:state.tasks, history:state.history}));
+  }catch(e){ console.error('save failed', e); }
+}
+
+/* ---------------- lookups (recursive — folders can be nested) ---------------- */
+function getSubject(id){ return state.subjects.find(s=>s.id===id); }
+function findFolderRec(folders, id){
+  for(const f of (folders||[])){
+    if(f.id===id) return f;
+    const found = findFolderRec(f.folders, id);
+    if(found) return found;
+  }
+  return null;
+}
+function getFolder(subj, id){ return subj ? findFolderRec(subj.folders, id) : null; }
+function getFile(folder, id){ return folder ? folder.files.find(f=>f.id===id) : null; }
+function resolveTask(t){
+  const subj = getSubject(t.subjectId); const folder = getFolder(subj, t.folderId); const file = getFile(folder, t.fileId);
+  return {subj, folder, file};
+}
+// container = the object (subject or folder) whose .folders array directly holds folderId
+function findFolderContainer(subj, folderId){
+  function search(container){
+    for(const f of (container.folders||[])){
+      if(f.id===folderId) return container;
+      const res = search(f);
+      if(res) return res;
+    }
+    return null;
+  }
+  return subj ? search(subj) : null;
+}
+function getPathTrail(subj, path){
+  let trail = [], folders = subj ? subj.folders : [];
+  for(const id of path){
+    const f = (folders||[]).find(x=>x.id===id);
+    if(!f) break;
+    trail.push(f);
+    folders = f.folders;
+  }
+  return trail;
+}
+
+/* ---------------- stats (recursive across nested folders) ---------------- */
+function collectFiles(folder){
+  let files = folder.files ? [...folder.files] : [];
+  (folder.folders||[]).forEach(sf=> files = files.concat(collectFiles(sf)));
+  return files;
+}
+function subjectAllFiles(subj){
+  let files = [];
+  (subj.folders||[]).forEach(f=> files = files.concat(collectFiles(f)));
+  return files;
+}
+function subjectStats(subj){
+  const files = subjectAllFiles(subj);
+  const total = files.length, done = files.filter(f=>f.done).length;
+  return {total, done, pct: total ? Math.round(done/total*100) : 0};
+}
+function taskStats(){
+  let total=0, done=0;
+  state.tasks.forEach(t=>{ const {file} = resolveTask(t); if(file){ total++; if(file.done) done++; } });
+  return {total, done, remaining: total-done, pct: total ? Math.round(done/total*100) : 0};
+}
+
+/* ---------------- cascade cleanup ---------------- */
+function pruneOrphanTasks(){
+  state.tasks = state.tasks.filter(t=>{ const {file} = resolveTask(t); return !!file; });
+}
+
+/* ---------------- history (log of what got done, by day) ---------------- */
+function recordHistory(subj, folder, file){
+  if(!state.history) state.history = [];
+  const today = todayStr();
+  const exists = state.history.some(h=>h.fileId===file.id && h.date===today);
+  if(exists) return;
+  state.history.unshift({
+    id: uid(),
+    date: today,
+    time: new Date().toTimeString().slice(0,5),
+    fileId: file.id,
+    title: file.title,
+    category: file.category,
+    subjectName: subj.name,
+    subjectColor: subj.color,
+    folderName: folder.name
+  });
+}
+function unrecordHistoryToday(fileId){
+  const today = todayStr();
+  state.history = (state.history||[]).filter(h=> !(h.fileId===fileId && h.date===today));
+}
+function removeHistoryEntry(id){
+  state.history = (state.history||[]).filter(h=>h.id!==id);
+  saveData(); render();
+}
+
+/* ---------------- nav actions ---------------- */
+function setView(v){ state.view = v; render(); }
+function selectSubject(id){ state.selectedSubjectId = id; state.folderPath = []; render(); }
+function openFolder(id){ state.folderPath.push(id); render(); }
+function goUp(){ state.folderPath.pop(); render(); }
+function goToDepth(i){ state.folderPath = state.folderPath.slice(0, i+1); render(); } // i=-1 => subject root
+
+function openModal(m){ state.modal = m; render(); }
+function closeModal(){ state.modal = null; render(); }
+
+/* ---------------- subject / folder / file CRUD ---------------- */
+let pickedColor = SUBJECT_PALETTE[0];
+function addSubject(name, color){
+  if(!name.trim()) return;
+  state.subjects.push({id:uid(), name:name.trim(), color, folders:[]});
+  state.selectedSubjectId = state.subjects[state.subjects.length-1].id;
+  state.folderPath = [];
+  saveData(); closeModal();
+}
+function deleteSubject(id){
+  if(!confirm('حذف هذه المادة وكل الفولدرات والملفات جواها؟ لا يمكن التراجع.')) return;
+  state.subjects = state.subjects.filter(s=>s.id!==id);
+  pruneOrphanTasks();
+  if(state.selectedSubjectId===id){ state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null; state.folderPath = []; }
+  saveData(); render();
+}
+
+// parentFolderId null => add at subject root. Otherwise adds as a subfolder inside that folder (تفرعات).
+function addFolder(subjectId, parentFolderId, name){
+  if(!name.trim()) return;
+  const subj = getSubject(subjectId);
+  if(!subj) return;
+  const container = parentFolderId ? getFolder(subj, parentFolderId) : subj;
+  if(!container) return;
+  if(!container.folders) container.folders = [];
+  container.folders.push({id:uid(), name:name.trim(), folders:[], files:[]});
+  saveData(); closeModal();
+}
+function deleteFolder(subjectId, folderId){
+  if(!confirm('حذف هذا الفولدر وكل الفولدرات الفرعية والملفات جواه؟ لا يمكن التراجع.')) return;
+  const subj = getSubject(subjectId);
+  if(!subj) return;
+  const container = findFolderContainer(subj, folderId);
+  if(!container) return;
+  container.folders = container.folders.filter(f=>f.id!==folderId);
+  pruneOrphanTasks();
+  const idx = state.folderPath.indexOf(folderId);
+  if(idx!==-1) state.folderPath = state.folderPath.slice(0, idx);
+  saveData(); render();
+}
+
+function saveFile(subjectId, folderId, fileId, data){
+  const subj = getSubject(subjectId); const folder = getFolder(subj, folderId);
+  if(!folder) return;
+  if(!folder.files) folder.files = [];
+  if(fileId){
+    const f = getFile(folder, fileId);
+    Object.assign(f, data);
+  } else {
+    folder.files.push({id:uid(), done:false, note:'', ...data});
+  }
+  saveData(); closeModal();
+}
+function toggleFile(subjectId, folderId, fileId){
+  const subj = getSubject(subjectId); const folder = getFolder(subj, folderId); const f = getFile(folder, fileId);
+  f.done = !f.done;
+  if(f.done) recordHistory(subj, folder, f); else unrecordHistoryToday(f.id);
+  saveData(); render();
+}
+function deleteFile(subjectId, folderId, fileId){
+  if(!confirm('حذف هذا الملف نهائيًا؟')) return;
+  const subj = getSubject(subjectId); const folder = getFolder(subj, folderId);
+  folder.files = folder.files.filter(x=>x.id!==fileId);
+  pruneOrphanTasks();
+  saveData(); render();
+}
+function saveNote(subjectId, folderId, fileId, note){
+  const subj = getSubject(subjectId); const folder = getFolder(subj, folderId); const f = getFile(folder, fileId);
+  f.note = note;
+  saveData();
+}
+
+/* ---------------- backup (export / import everything as a file) ---------------- */
+function exportBackup(){
+  const data = {
+    app: 'study-manager',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    subjects: state.subjects,
+    tasks: state.tasks,
+    history: state.history || []
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `study-backup-${todayStr()}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function triggerImportBackup(){
+  const input = document.getElementById('backup-file-input');
+  if(input) input.click();
+}
+function handleImportBackup(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = JSON.parse(e.target.result);
+      if(!data || !Array.isArray(data.subjects) || !Array.isArray(data.tasks)){
+        alert('ملف النسخة الاحتياطية غير صالح.');
+        return;
+      }
+      if(!confirm('استيراد النسخة الاحتياطية هيستبدل كل البيانات الحالية (المواد، الملفات، المهام، السجل). متأكد؟')) return;
+      state.subjects = data.subjects || [];
+      state.tasks = data.tasks || [];
+      state.history = data.history || [];
+      state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
+      state.folderPath = [];
+      state.view = 'home';
+      saveData();
+      render();
+    }catch(err){
+      alert('تعذر قراءة ملف النسخة الاحتياطية.');
+    }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+/* ---------------- tasks (import references) ---------------- */
+function importTask(subjectId, folderId, fileId){
+  const already = state.tasks.find(t=>t.subjectId===subjectId && t.folderId===folderId && t.fileId===fileId);
+  if(already) return;
+  state.tasks.push({id:uid(), subjectId, folderId, fileId});
+  saveData(); render();
+}
+function removeTask(taskId){
+  state.tasks = state.tasks.filter(t=>t.id!==taskId);
+  saveData(); render();
+}
+function toggleTaskDone(t){
+  const {subj, folder, file} = resolveTask(t);
+  if(!file) return;
+  file.done = !file.done;
+  if(file.done) recordHistory(subj, folder, file); else unrecordHistoryToday(file.id);
+  saveData(); render();
+}
+
+/* ---------------- rendering helpers ---------------- */
+function ringHTML(pct, color, size, thick){
+  return `<div class="ring" style="--pct:${pct}; --ring-color:${color}; --thick:${thick}px; width:${size}px; height:${size}px;">
+    <div class="mono" style="position:relative; z-index:1; text-align:center;">
+      <div style="font-size:${size*0.24}px; font-weight:600; color:var(--text); line-height:1;">${pct}%</div>
+    </div>
+  </div>`;
+}
+function folderIconSVG(color, size=16){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" style="flex-shrink:0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>`;
+}
+
+/* ---------------- main render ---------------- */
+function render(){
+  const app = document.getElementById('app');
+  if(!state.loaded){
+    app.innerHTML = `<div style="height:100vh; display:flex; align-items:center; justify-content:center; color:var(--muted);">جارِ التحميل...</div>`;
+    return;
+  }
+
+  app.innerHTML = `
+  <div style="max-width:1180px; margin:0 auto; padding:22px 20px 60px;">
+
+    <!-- titlebar -->
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; flex-wrap:wrap; gap:12px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="display:flex; gap:6px;">
+          <span style="width:11px;height:11px;border-radius:50%;background:#EE6A5F;"></span>
+          <span style="width:11px;height:11px;border-radius:50%;background:#F5BD4F;"></span>
+          <span style="width:11px;height:11px;border-radius:50%;background:#61C554;"></span>
+        </div>
+        <div style="width:1px; height:20px; background:var(--border);"></div>
+        <div style="font-weight:800; font-size:17px;">مكتبة الدراسة</div>
+      </div>
+      <div style="display:flex; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:4px;">
+        <div class="tab-btn" data-active="${state.view==='home'}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
+        <div class="tab-btn" data-active="${state.view==='explorer'}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
+        <div class="tab-btn" data-active="${state.view==='history'}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div class="mono" style="font-size:12px; color:var(--muted); background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:8px 12px; white-space:nowrap;">${esc(todayFormatted())}</div>
+        <button onclick="exportBackup()" title="تصدير نسخة احتياطية (تحميل ملف)" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
+          <i data-lucide="download" style="width:15px;height:15px;"></i>
+        </button>
+        <button onclick="triggerImportBackup()" title="استيراد نسخة احتياطية (رفع ملف)" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
+          <i data-lucide="upload" style="width:15px;height:15px;"></i>
+        </button>
+        <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="handleImportBackup(this)">
+      </div>
+    </div>
+
+    ${state.view==='home' ? renderHome() : state.view==='explorer' ? renderExplorer() : renderHistory()}
+  </div>
+
+  ${state.modal ? renderModal() : ''}
+  `;
+  if(window.lucide) lucide.createIcons();
+}
+
+/* ---------------- HOME VIEW ---------------- */
+function renderHome(){
+  const t = taskStats();
+  return `
+    <div class="dash-card" style="padding:20px; margin-bottom:20px;">
+      <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
+        <div style="display:flex; align-items:center; gap:16px;">
+          ${ringHTML(t.pct, 'var(--accent)', 88, 9)}
+          <div>
+            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">نسبة إنجاز المهام</div>
+            <div style="font-size:26px; font-weight:800;">${t.pct}%</div>
+          </div>
+        </div>
+        <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+        <div style="display:flex; gap:22px; flex-wrap:wrap;">
+          <div><div style="color:var(--muted); font-size:12.5px;">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${t.done}</div></div>
+          <div><div style="color:var(--muted); font-size:12.5px;">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${t.remaining}</div></div>
+          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي المهام</div><div class="mono" style="font-size:22px; font-weight:600;">${t.total}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-card" style="padding:18px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-weight:800; font-size:16px;">المهام</div>
+        <button onclick="openModal({type:'import'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
+          <i data-lucide="plus" style="width:15px;height:15px;"></i> استيراد ملف كمهمة
+        </button>
+      </div>
+
+      ${state.tasks.length===0 ? `
+        <div style="text-align:center; color:var(--faint); padding:50px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+          <div style="font-size:13.5px;">لا توجد مهام بعد — دوس "استيراد ملف كمهمة" واختار ملف من قسم الملفات والمواد</div>
+        </div>
+      ` : `
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          ${state.tasks.map(taskRow).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function taskRow(t){
+  const {subj, folder, file} = resolveTask(t);
+  if(!file) return '';
+  const catColor = CATEGORY_COLORS[file.category] || 'var(--accent)';
+  return `
+  <div class="file-row" style="display:flex; align-items:center; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${file.done?'opacity:0.6;':''}">
+    <div class="check-btn" data-done="${file.done}" onclick='toggleTaskDone(${JSON.stringify(t)})'>
+      ${file.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ''}
+    </div>
+    <div style="flex:1; min-width:0;">
+      <div style="font-weight:600; font-size:14px; ${file.done?'text-decoration:line-through; text-decoration-color:var(--faint);':''} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(file.title)}</div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
+        <span class="badge" style="background:${catColor}22; color:${catColor};">${esc(file.category)}</span>
+        <span style="font-size:11.5px; color:var(--faint);">${esc(subj.name)} / ${esc(folder.name)}</span>
+        ${file.link ? `<a href="${esc(file.link)}" target="_blank" rel="noopener" style="color:var(--accent); display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="play-circle" style="width:12px;height:12px;"></i> ادخل الدرس</a>` : ''}
+        ${file.pdfLink ? `<a href="${esc(file.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ''}
+      </div>
+      ${file.note ? `<div class="note-box" style="cursor:default;">${esc(file.note)}</div>` : ''}
+    </div>
+    <button class="hover-actions" onclick="removeTask('${t.id}')" title="إزالة من المهام" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
+      <i data-lucide="x" style="width:15px;height:15px;"></i>
+    </button>
+  </div>`;
+}
+
+/* ---------------- EXPLORER VIEW (subjects -> nested folders -> files) ---------------- */
+function renderExplorer(){
+  const selectedSubj = getSubject(state.selectedSubjectId);
+
+  return `
+    <div class="explorer-row">
+      <div class="dash-card explorer-sidebar" style="flex-shrink:0; overflow:hidden;">
+        <div style="padding:12px 14px 8px; color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.3px;">المواد</div>
+        <div>
+          ${state.subjects.map(s=>{
+            const st = subjectStats(s);
+            const active = s.id===state.selectedSubjectId;
+            return `
+            <div class="sidebar-item" data-active="${active}" style="display:flex; align-items:center; justify-content:space-between; padding:9px 14px; cursor:pointer;" onclick="selectSubject('${s.id}')">
+              <div style="display:flex; align-items:center; gap:9px; min-width:0;">
+                ${folderIconSVG(s.color)}
+                <span style="font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(s.name)}</span>
+              </div>
+              <span class="mono" style="font-size:11px; color:var(--faint); flex-shrink:0;">${st.pct}%</span>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="padding:10px 14px 14px;">
+          <button onclick="openModal({type:'subject'})" style="width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background:none; border:1.5px dashed var(--border); color:var(--muted); border-radius:10px; padding:9px; font-size:13px; font-weight:600; cursor:pointer;">
+            <i data-lucide="plus" style="width:15px;height:15px;"></i> مادة جديدة
+          </button>
+        </div>
+      </div>
+
+      <div class="dash-card" style="flex:1; min-width:0; padding:18px;">
+        ${!selectedSubj ? `
+          <div style="text-align:center; color:var(--faint); padding:60px 20px;">
+            <i data-lucide="folder-open" style="width:34px;height:34px; margin-bottom:10px;"></i>
+            <div style="font-size:14px;">أضف مادة من القائمة الجانبية لتبدأ إضافة الفولدرات والملفات</div>
+          </div>
+        ` : renderFolderLevel(selectedSubj)}
+      </div>
+    </div>
+  `;
+}
+
+// Renders whatever level of the folder tree the user is currently browsing (subject root,
+// or any nested folder), based on state.folderPath. Folders can contain subfolders (تفرعات)
+// as well as files at the same time.
+function renderFolderLevel(subj){
+  const path = state.folderPath;
+  const trail = getPathTrail(subj, path);
+  const folder = trail.length ? trail[trail.length-1] : null;
+  const foldersArr = folder ? (folder.folders||[]) : (subj.folders||[]);
+  const directFiles = folder ? (folder.files||[]) : [];
+  const doneCount = directFiles.filter(x=>x.done).length;
+  const sStats = subjectStats(subj);
+
+  const breadcrumbHTML = `
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:12.5px; flex-wrap:wrap;">
+      <span class="crumb" onclick="goToDepth(-1)" style="${trail.length? '':'color:var(--text); font-weight:700;'}">${esc(subj.name)}</span>
+      ${trail.map((f,i)=>`
+        <i data-lucide="chevron-left" style="width:13px;height:13px; color:var(--faint);"></i>
+        <span class="crumb" onclick="goToDepth(${i})" style="${i===trail.length-1?'color:var(--text); font-weight:700;':''}">${esc(f.name)}</span>
+      `).join('')}
+    </div>
+  `;
+
+  const headerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div style="display:flex; align-items:center; gap:11px;">
+        ${folder ? `
+          <button onclick="goUp()" style="background:var(--surface-3); border:none; border-radius:9px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
+            <i data-lucide="arrow-right" style="width:16px;height:16px;"></i>
+          </button>
+        ` : folderIconSVG(subj.color, 22)}
+        <div>
+          <div style="font-weight:800; font-size:17px;">${folder?esc(folder.name):esc(subj.name)}</div>
+          <div class="mono" style="font-size:12px; color:var(--muted);">${folder
+            ? `${doneCount}/${directFiles.length} ملف مباشر في الفولدر ده`
+            : `${sStats.done}/${sStats.total} ملف مكتمل · ${sStats.pct}%`}</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button onclick='openModal({type:"folder", subjectId:"${subj.id}", parentFolderId:${folder?`"${folder.id}"`:null}})' class="btn-primary" style="display:flex; align-items:center; gap:6px;">
+          <i data-lucide="folder-plus" style="width:15px;height:15px;"></i> فولدر جديد
+        </button>
+        ${folder ? `
+          <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}"})' class="btn-primary" style="display:flex; align-items:center; gap:6px;">
+            <i data-lucide="plus" style="width:15px;height:15px;"></i> ملف جديد
+          </button>
+        ` : `
+          <button onclick="deleteSubject('${subj.id}')" title="حذف المادة" style="background:none; border:1px solid var(--border); border-radius:10px; padding:0 12px; color:var(--faint); cursor:pointer;">
+            <i data-lucide="trash-2" style="width:15px;height:15px;"></i>
+          </button>
+        `}
+      </div>
+    </div>
+  `;
+
+  const gridHTML = foldersArr.length===0 ? `
+      <div style="text-align:center; color:var(--faint); padding:${folder?'26px':'48px'} 20px; border:1.5px dashed var(--border); border-radius:12px; ${folder?'margin-bottom:16px;':''}">
+        <div style="font-size:13.5px;">لا توجد فولدرات فرعية بعد${folder?' — تقدر تضيف فولدر جواه':''}</div>
+      </div>
+    ` : `
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px,1fr)); gap:12px; ${folder?'margin-bottom:20px;':''}">
+        ${foldersArr.map(f=>{
+          const files = collectFiles(f);
+          const done = files.filter(x=>x.done).length;
+          const subCount = (f.folders||[]).length;
+          return `
+          <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="openFolder('${f.id}')">
+            <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="position:absolute; top:8px; left:8px; background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
+              <i data-lucide="x" style="width:13px;height:13px;"></i>
+            </button>
+            ${folderIconSVG(subj.color, 30)}
+            <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.name)}</div>
+            <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${done}/${files.length} ملف${subCount? ' · '+subCount+' فولدر فرعي':''}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+
+  const filesHTML = !folder ? '' : (directFiles.length===0 ? `
+      <div style="text-align:center; color:var(--faint); padding:36px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+        <div style="font-size:13.5px;">لا توجد ملفات مباشرة في "${esc(folder.name)}" بعد</div>
+      </div>
+    ` : `
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        ${directFiles.map(f=>renderFileRow(subj, folder, f)).join('')}
+      </div>
+    `);
+
+  return breadcrumbHTML + headerHTML + gridHTML + filesHTML;
+}
+
+function renderFileRow(subj, folder, f){
+  const catColor = CATEGORY_COLORS[f.category] || 'var(--accent)';
+  const alreadyTask = state.tasks.some(t=>t.fileId===f.id && t.folderId===folder.id && t.subjectId===subj.id);
+  return `
+  <div class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done?'opacity:0.6;':''}">
+    <div class="check-btn" data-done="${f.done}" onclick="toggleFile('${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
+      ${f.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ''}
+    </div>
+    <div style="flex:1; min-width:0;">
+      <div style="font-weight:600; font-size:14px; ${f.done?'text-decoration:line-through; text-decoration-color:var(--faint);':''} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
+        <span class="badge" style="background:${catColor}22; color:${catColor};">${esc(f.category)}</span>
+        ${f.link ? `<a href="${esc(f.link)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="link-2" style="width:12px;height:12px;"></i> رابط الدرس</a>` : ''}
+        ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ''}
+        ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
+      </div>
+      <div class="note-box" contenteditable="true" data-placeholder="اضغط لإضافة ملاحظة..." onblur="saveNote('${subj.id}','${folder.id}','${f.id}', this.innerText)">${esc(f.note||'')}</div>
+    </div>
+    <div class="hover-actions" style="display:flex; gap:4px; flex-shrink:0;">
+      <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}", fileId:"${f.id}"})' title="تعديل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
+        <i data-lucide="pencil" style="width:14px;height:14px;"></i>
+      </button>
+      <button onclick="deleteFile('${subj.id}','${folder.id}','${f.id}')" title="حذف" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
+        <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+/* ---------------- HISTORY VIEW (what got done, grouped by day) ---------------- */
+function renderHistory(){
+  const history = state.history || [];
+  if(history.length===0){
+    return `
+    <div class="dash-card" style="padding:60px 20px; text-align:center; color:var(--faint);">
+      <i data-lucide="history" style="width:34px;height:34px; margin-bottom:10px;"></i>
+      <div style="font-size:14px;">لسه مفيش سجل — أول ما تحدد أي ملف أو مهمة "تم" هيتسجل هنا حسب يوم إنجازه</div>
+    </div>`;
+  }
+  const groups = {};
+  history.forEach(h=>{ (groups[h.date] = groups[h.date] || []).push(h); });
+  const dates = Object.keys(groups).sort((a,b)=> b.localeCompare(a));
+  return `
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      ${dates.map(date=>{
+        const entries = groups[date].slice().sort((a,b)=> (b.time||'').localeCompare(a.time||''));
+        return `
+        <div class="dash-card" style="padding:16px 18px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+            <div style="font-weight:800; font-size:14.5px;">${esc(formatDateLabel(date))}</div>
+            <span class="mono" style="font-size:11.5px; color:var(--faint);">${entries.length} ${entries.length===1?'مهمة':'مهام'}</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            ${entries.map(renderHistoryRow).join('')}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+function formatDateLabel(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m-1, d);
+  let label = dt.toLocaleDateString('ar-EG', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  const today = todayStr();
+  const yestD = new Date(); yestD.setDate(yestD.getDate()-1);
+  const yest = `${yestD.getFullYear()}-${String(yestD.getMonth()+1).padStart(2,'0')}-${String(yestD.getDate()).padStart(2,'0')}`;
+  if(dateStr===today) return `اليوم — ${label}`;
+  if(dateStr===yest) return `أمس — ${label}`;
+  return label;
+}
+function renderHistoryRow(h){
+  const catColor = CATEGORY_COLORS[h.category] || 'var(--accent)';
+  return `
+  <div class="file-row" style="display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--border-soft); border-radius:11px;">
+    <div style="width:22px; height:22px; border-radius:7px; background:var(--success); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+      <i data-lucide="check" style="width:14px;height:14px; color:#06110B;"></i>
+    </div>
+    <div style="flex:1; min-width:0;">
+      <div style="font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(h.title)}</div>
+      <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
+        <span class="badge" style="background:${catColor}22; color:${catColor};">${esc(h.category)}</span>
+        <span style="font-size:11.5px; color:var(--faint);">${esc(h.subjectName)} / ${esc(h.folderName)}</span>
+        ${h.time ? `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(h.time)}</span>` : ''}
+      </div>
+    </div>
+    <button class="hover-actions" onclick="removeHistoryEntry('${h.id}')" title="حذف من السجل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
+      <i data-lucide="x" style="width:15px;height:15px;"></i>
+    </button>
+  </div>`;
+}
+
+/* ---------------- MODALS ---------------- */
+function renderModal(){
+  const m = state.modal;
+  if(m.type==='subject') return renderSubjectModal();
+  if(m.type==='folder') return renderFolderModal(m);
+  if(m.type==='file') return renderFileModal(m);
+  if(m.type==='import') return renderImportModal();
+  return '';
+}
+
+function renderSubjectModal(){
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:360px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">مادة جديدة</div>
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم المادة</label>
+      <input id="subj-name-input" class="field-input" placeholder="مثال: رياضيات" style="margin-bottom:16px;">
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">اللون</label>
+      <div id="swatch-row" style="display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap;">
+        ${SUBJECT_PALETTE.map((c,i)=>`<div class="swatch" data-selected="${i===0}" data-color="${c}" style="background:${c};" onclick="pickSwatch('${c}')"></div>`).join('')}
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="submitSubject()">إضافة</button>
+      </div>
+    </div>
+  </div>`;
+}
+function pickSwatch(c){
+  pickedColor = c;
+  document.querySelectorAll('#swatch-row .swatch').forEach(el=> el.setAttribute('data-selected', el.getAttribute('data-color')===c ? 'true':'false'));
+}
+function submitSubject(){ addSubject(document.getElementById('subj-name-input').value, pickedColor); }
+
+function renderFolderModal(m){
+  const subj = getSubject(m.subjectId);
+  const parentFolder = m.parentFolderId ? getFolder(subj, m.parentFolderId) : null;
+  const contextLabel = parentFolder ? `${esc(subj.name)} / ${esc(parentFolder.name)}` : esc(subj.name);
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:360px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">فولدر جديد <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${contextLabel}</span></div>
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم الفولدر</label>
+      <input id="folder-name-input" class="field-input" placeholder="مثال: المحاضرات، الواجبات..." style="margin-bottom:20px;">
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="addFolder('${subj.id}', ${m.parentFolderId?`'${m.parentFolderId}'`:'null'}, document.getElementById('folder-name-input').value)">إضافة</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+let pickedCategory = null;
+function renderFileModal(m){
+  const subj = getSubject(m.subjectId); const folder = getFolder(subj, m.folderId);
+  const existing = m.fileId ? getFile(folder, m.fileId) : null;
+  const categories = Object.keys(CATEGORY_COLORS);
+  pickedCategory = existing ? existing.category : categories[0];
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:420px; padding:22px; max-height:88vh; overflow-y:auto;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${existing?'تعديل الملف':'ملف جديد'} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${esc(subj.name)} / ${esc(folder.name)}</span></div>
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم الملف</label>
+      <input id="f-title" class="field-input" placeholder="مثال: الدرس الثالث - الطاقة الحركية" value="${existing?esc(existing.title):''}" style="margin-bottom:16px;">
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">التصنيف</label>
+      <div id="cat-row" style="display:flex; gap:8px; margin-bottom:16px;">
+        ${categories.map(c=>`<div class="cat-pill" data-selected="${pickedCategory===c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}</div>`).join('')}
+      </div>
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط المنصة / الدرس (اختياري)</label>
+      <input id="f-link" class="field-input" placeholder="https://..." value="${existing?esc(existing.link||''):''}" style="margin-bottom:16px;">
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط ملف PDF (اختياري)</label>
+      <input id="f-pdf" class="field-input" placeholder="https://..." value="${existing?esc(existing.pdfLink||''):''}" style="margin-bottom:16px;">
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">ملاحظة (اختياري)</label>
+      <textarea id="f-note" class="field-input" placeholder="أي ملاحظة بسيطة على الملف...">${existing?esc(existing.note||''):''}</textarea>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:20px;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="submitFile('${subj.id}','${folder.id}', ${existing?`'${existing.id}'`:'null'})">${existing?'حفظ':'إضافة'}</button>
+      </div>
+    </div>
+  </div>`;
+}
+function pickCategory(c){
+  pickedCategory = c;
+  document.querySelectorAll('#cat-row .cat-pill').forEach(el=> el.setAttribute('data-selected', el.getAttribute('data-cat')===c ? 'true':'false'));
+}
+function submitFile(subjectId, folderId, fileId){
+  const title = document.getElementById('f-title').value;
+  if(!title.trim()){ document.getElementById('f-title').focus(); return; }
+  const link = document.getElementById('f-link').value.trim();
+  const pdfLink = document.getElementById('f-pdf').value.trim();
+  const note = document.getElementById('f-note').value.trim();
+  saveFile(subjectId, folderId, fileId, {title:title.trim(), category:pickedCategory, link, pdfLink, note});
+}
+
+function renderImportModal(){
+  const hasAnyFiles = state.subjects.some(s=>subjectAllFiles(s).length>0);
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:14px;">استيراد ملف كمهمة</div>
+      <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px;">
+        ${!hasAnyFiles ? `<div style="color:var(--faint); font-size:13px; text-align:center; padding:30px 0;">لا توجد مواد أو ملفات بعد. أضف من "الملفات والمواد" أولًا.</div>` : state.subjects.map(subj=>{
+          if(subjectAllFiles(subj).length===0) return '';
+          return `
+          <div style="margin-bottom:14px;">
+            <div style="display:flex; align-items:center; gap:7px; font-weight:700; font-size:13.5px; margin-bottom:6px; color:${subj.color};">
+              ${folderIconSVG(subj.color,15)} ${esc(subj.name)}
+            </div>
+            ${renderImportFolders(subj, subj.folders, 0)}
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+        <button class="btn-ghost" onclick="closeModal()">تم</button>
+      </div>
+    </div>
+  </div>`;
+}
+function renderImportFolders(subj, folders, depth){
+  if(!folders || folders.length===0) return '';
+  return folders.map(folder=>{
+    const hasContent = folder.files.length>0 || (folder.folders && folder.folders.length>0);
+    if(!hasContent) return '';
+    return `
+      <div style="margin-bottom:8px; padding-right:${14+depth*14}px;">
+        <div style="font-size:12px; color:var(--muted); font-weight:600; margin-bottom:3px;">${esc(folder.name)}</div>
+        ${folder.files.length===0 ? '' : folder.files.map(f=>{
+          const already = state.tasks.some(t=>t.fileId===f.id && t.folderId===folder.id && t.subjectId===subj.id);
+          return `
+          <div class="import-row">
+            <span style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</span>
+            ${already ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px; flex-shrink:0;"><i data-lucide="check" style="width:12px;height:12px;"></i> مستوردة</span>`
+              : `<button onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="background:var(--accent-soft); color:var(--accent); border:none; border-radius:8px; padding:4px 10px; font-size:11.5px; font-weight:700; cursor:pointer; flex-shrink:0;">+ استيراد</button>`}
+          </div>`;
+        }).join('')}
+        ${renderImportFolders(subj, folder.folders, depth+1)}
+      </div>`;
+  }).join('');
+}
+
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && state.modal) closeModal(); });
+
+loadData();
+</script>
+</body>
+</html>
