@@ -149,41 +149,16 @@ let state = {
   user: null,           // {uid, email}
   authMode: 'login',    // 'login' | 'signup'
   authError: '',
-  authBusy: false
+  authBusy: false,
+  authPwVisible: false
 };
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 function esc(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function seedData(){
-  const subjects = [
-    { id: uid(), name:'فيزياء', color:'#6D5EF0', folders:[
-      { id: uid(), name:'المحاضرات', folders:[], files:[
-        {id:uid(), title:'الدرس الأول - قوانين نيوتن للحركة', category:'منصة', link:'https://example.com/lesson1', pdfLink:'', note:'', done:true},
-        {id:uid(), title:'الدرس الثاني - الطاقة والشغل', category:'منصة', link:'', pdfLink:'', note:'', done:false}
-      ]},
-      { id: uid(), name:'الواجبات', folders:[], files:[
-        {id:uid(), title:'واجب الفصل الثاني', category:'واجب PDF', link:'', pdfLink:'https://example.com/hw2.pdf', note:'راجع مسألة 5 كويس', done:false}
-      ]}
-    ]},
-    { id: uid(), name:'كيمياء', color:'#35D0A0', folders:[
-      { id: uid(), name:'المحاضرات', folders:[], files:[
-        {id:uid(), title:'الروابط الكيميائية - شرح', category:'منصة', link:'https://example.com/bonds', pdfLink:'', note:'', done:true}
-      ]}
-    ]}
-  ];
-  const tasks = [
-    {id:uid(), subjectId: subjects[0].id, folderId: subjects[0].folders[0].id, fileId: subjects[0].folders[0].files[0].id},
-    {id:uid(), subjectId: subjects[0].id, folderId: subjects[0].folders[1].id, fileId: subjects[0].folders[1].files[0].id},
-    {id:uid(), subjectId: subjects[1].id, folderId: subjects[1].folders[0].id, fileId: subjects[1].folders[0].files[0].id}
-  ];
-  const history = [
-    {id:uid(), date: todayStr(), time: new Date().toTimeString().slice(0,5), fileId: subjects[0].folders[0].files[0].id, title: subjects[0].folders[0].files[0].title, category: subjects[0].folders[0].files[0].category, subjectName: subjects[0].name, subjectColor: subjects[0].color, folderName: subjects[0].folders[0].name},
-    {id:uid(), date: todayStr(), time: new Date().toTimeString().slice(0,5), fileId: subjects[1].folders[0].files[0].id, title: subjects[1].folders[0].files[0].title, category: subjects[1].folders[0].files[0].category, subjectName: subjects[1].name, subjectColor: subjects[1].color, folderName: subjects[1].folders[0].name}
-  ];
-  return {subjects, tasks, history};
+  return {subjects: [], tasks: [], history: []};
 }
-
 /* ---------------- date helpers ---------------- */
 function todayStr(){
   const d = new Date();
@@ -232,10 +207,20 @@ function saveData(){
 
 /* ---------------- auth ---------------- */
 function switchAuthMode(mode){ state.authMode = mode; state.authError = ''; render(); }
+function togglePasswordVisibility(){
+  state.authPwVisible = !state.authPwVisible;
+  const input = document.getElementById('auth-password');
+  const icon = document.getElementById('auth-pw-toggle-icon');
+  if(input) input.type = state.authPwVisible ? 'text' : 'password';
+  if(icon && window.lucide){
+    icon.setAttribute('data-lucide', state.authPwVisible ? 'eye-off' : 'eye');
+    lucide.createIcons();
+  }
+}
 function authFieldsOnEnter(e){ if(e.key==='Enter') submitAuth(); }
 async function submitAuth(){
   const email = (document.getElementById('auth-email')||{}).value?.trim();
-  const password = (document.getElementById('auth-password')||{}).value;
+  const password = (document.getElementById('auth-password')||{}).value?.trim();
   if(!email || !password){ state.authError = 'من فضلك اكتب الإيميل والباسورد'; render(); return; }
   state.authBusy = true; state.authError = ''; render();
   try{
@@ -611,7 +596,12 @@ function renderAuthScreen(){
       <input id="auth-email" type="email" class="field-input" placeholder="example@email.com" style="margin-bottom:14px;" onkeydown="authFieldsOnEnter(event)">
 
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الباسورد</label>
-      <input id="auth-password" type="password" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="margin-bottom:8px;" onkeydown="authFieldsOnEnter(event)">
+      <div style="position:relative; margin-bottom:8px;">
+        <input id="auth-password" type="${state.authPwVisible?'text':'password'}" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="padding-left:40px;" onkeydown="authFieldsOnEnter(event)">
+        <button type="button" onclick="togglePasswordVisibility()" style="position:absolute; left:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; display:flex; align-items:center; padding:4px;">
+          <i id="auth-pw-toggle-icon" data-lucide="${state.authPwVisible?'eye-off':'eye'}" style="width:16px;height:16px;"></i>
+        </button>
+      </div>
 
       ${state.authError ? `<div style="color:#F2795B; font-size:12.5px; margin-bottom:10px;">${esc(state.authError)}</div>` : ''}
 
