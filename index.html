@@ -6,6 +6,9 @@
 <title>مكتبة الدراسة</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
@@ -116,7 +119,20 @@ textarea.field-input{ resize:vertical; min-height:60px; font-size:13px; }
 /* ---------------- constants ---------------- */
 const CATEGORY_COLORS = { 'منصة': '#5AA9E6', 'واجب PDF': '#F2795B', 'مراجعة': '#B98BF0' };
 const SUBJECT_PALETTE = ['#6D5EF0','#35D0A0','#F2795B','#5AA9E6','#F5A623','#B98BF0','#EC7BB0','#4FD1C5'];
-const STORAGE_KEY = 'study-data-v3';
+
+/* ---------------- firebase ---------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyDIAc6YYSuPulqLREY19o2Y8xOcL_SkNFo",
+  authDomain: "study-manager-d446c.firebaseapp.com",
+  projectId: "study-manager-d446c",
+  storageBucket: "study-manager-d446c.firebasestorage.app",
+  messagingSenderId: "978923860016",
+  appId: "1:978923860016:web:134be1b5e53d643add3df5"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+let saveTimer = null;
 
 /* ---------------- state ---------------- */
 let state = {
@@ -127,7 +143,13 @@ let state = {
   selectedSubjectId: null,
   folderPath: [],  // array of folder ids, from subject root down to the currently open folder
   modal: null,
-  loaded: false
+  loaded: false,
+  // --- auth ---
+  authChecked: false,  // becomes true once Firebase tells us whether a user is signed in
+  user: null,           // {uid, email}
+  authMode: 'login',    // 'login' | 'signup'
+  authError: '',
+  authBusy: false
 };
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -173,25 +195,25 @@ function todayFormatted(){
   catch(e){ return d.toLocaleDateString(); }
 }
 
-/* ---------------- local storage (persists in the browser, per device) ---------------- */
-function loadData(){
+/* ---------------- cloud storage (Firestore — synced to the user's account) ---------------- */
+async function loadDataForUser(uid){
+  state.loaded = false; render();
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      const parsed = JSON.parse(raw);
-      state.subjects = parsed.subjects || [];
-      state.tasks = parsed.tasks || [];
-      state.history = parsed.history || [];
+    const docRef = db.collection('users').doc(uid);
+    const snap = await docRef.get();
+    if(snap.exists){
+      const data = snap.data() || {};
+      state.subjects = data.subjects || [];
+      state.tasks = data.tasks || [];
+      state.history = data.history || [];
     } else {
       const seed = seedData();
       state.subjects = seed.subjects; state.tasks = seed.tasks; state.history = seed.history || [];
-      saveData();
+      await docRef.set({subjects:state.subjects, tasks:state.tasks, history:state.history});
     }
   }catch(e){
     console.error('load failed', e);
-    const seed = seedData();
-    state.subjects = seed.subjects; state.tasks = seed.tasks; state.history = seed.history || [];
-    try{ saveData(); }catch(e2){}
+    state.subjects = []; state.tasks = []; state.history = [];
   }
   state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
   state.folderPath = [];
@@ -199,10 +221,58 @@ function loadData(){
   render();
 }
 function saveData(){
-  try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({subjects:state.subjects, tasks:state.tasks, history:state.history}));
-  }catch(e){ console.error('save failed', e); }
+  if(!state.user) return;
+  const uid = state.user.uid;
+  const snapshot = {subjects: state.subjects, tasks: state.tasks, history: state.history};
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{
+    db.collection('users').doc(uid).set(snapshot).catch(e=> console.error('save failed', e));
+  }, 500);
 }
+
+/* ---------------- auth ---------------- */
+function switchAuthMode(mode){ state.authMode = mode; state.authError = ''; render(); }
+function authFieldsOnEnter(e){ if(e.key==='Enter') submitAuth(); }
+async function submitAuth(){
+  const email = (document.getElementById('auth-email')||{}).value?.trim();
+  const password = (document.getElementById('auth-password')||{}).value;
+  if(!email || !password){ state.authError = 'من فضلك اكتب الإيميل والباسورد'; render(); return; }
+  state.authBusy = true; state.authError = ''; render();
+  try{
+    if(state.authMode==='signup'){
+      await auth.createUserWithEmailAndPassword(email, password);
+    } else {
+      await auth.signInWithEmailAndPassword(email, password);
+    }
+  }catch(e){
+    state.authError = authErrorMessage(e);
+    state.authBusy = false; render();
+  }
+}
+function authErrorMessage(e){
+  const code = e && e.code || '';
+  if(code.includes('email-already-in-use')) return 'الإيميل ده مسجل قبل كده، جرب تسجل دخول بدل إنشاء حساب';
+  if(code.includes('invalid-email')) return 'صيغة الإيميل غلط';
+  if(code.includes('weak-password')) return 'الباسورد لازم يكون 6 حروف/أرقام على الأقل';
+  if(code.includes('user-not-found') || code.includes('wrong-password') || code.includes('invalid-credential')) return 'الإيميل أو الباسورد غلط';
+  if(code.includes('network-request-failed')) return 'مفيش اتصال بالإنترنت';
+  return 'حصل خطأ، حاول تاني';
+}
+function doLogout(){ auth.signOut(); }
+
+auth.onAuthStateChanged(function(user){
+  state.authChecked = true;
+  state.authBusy = false;
+  if(user){
+    state.user = { uid: user.uid, email: user.email };
+    loadDataForUser(user.uid);
+  } else {
+    state.user = null;
+    state.loaded = false;
+    state.subjects = []; state.tasks = []; state.history = [];
+    render();
+  }
+});
 
 /* ---------------- lookups (recursive — folders can be nested) ---------------- */
 function getSubject(id){ return state.subjects.find(s=>s.id===id); }
@@ -463,8 +533,17 @@ function folderIconSVG(color, size=16){
 /* ---------------- main render ---------------- */
 function render(){
   const app = document.getElementById('app');
-  if(!state.loaded){
+  if(!state.authChecked){
     app.innerHTML = `<div style="height:100vh; display:flex; align-items:center; justify-content:center; color:var(--muted);">جارِ التحميل...</div>`;
+    return;
+  }
+  if(!state.user){
+    app.innerHTML = renderAuthScreen();
+    if(window.lucide) lucide.createIcons();
+    return;
+  }
+  if(!state.loaded){
+    app.innerHTML = `<div style="height:100vh; display:flex; align-items:center; justify-content:center; color:var(--muted);">جارِ تحميل بياناتك...</div>`;
     return;
   }
 
@@ -496,6 +575,11 @@ function render(){
           <i data-lucide="upload" style="width:15px;height:15px;"></i>
         </button>
         <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="handleImportBackup(this)">
+        <div style="width:1px; height:20px; background:var(--border);"></div>
+        <div class="mono" style="font-size:11.5px; color:var(--muted); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(state.user.email||'')}">${esc(state.user.email||'')}</div>
+        <button onclick="doLogout()" title="تسجيل الخروج" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
+          <i data-lucide="log-out" style="width:15px;height:15px;"></i>
+        </button>
       </div>
     </div>
 
@@ -505,6 +589,42 @@ function render(){
   ${state.modal ? renderModal() : ''}
   `;
   if(window.lucide) lucide.createIcons();
+}
+
+/* ---------------- AUTH SCREEN ---------------- */
+function renderAuthScreen(){
+  const isSignup = state.authMode === 'signup';
+  return `
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;">
+    <div class="dash-card" style="width:100%; max-width:380px; padding:28px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:22px;">
+        <div style="width:38px; height:38px; border-radius:11px; background:var(--accent-soft); display:flex; align-items:center; justify-content:center;">
+          <i data-lucide="book-open" style="width:19px;height:19px; color:var(--accent);"></i>
+        </div>
+        <div>
+          <div style="font-weight:800; font-size:16px;">مكتبة الدراسة</div>
+          <div style="font-size:12px; color:var(--muted);">${isSignup ? 'إنشاء حساب جديد' : 'تسجيل الدخول لحسابك'}</div>
+        </div>
+      </div>
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الإيميل</label>
+      <input id="auth-email" type="email" class="field-input" placeholder="example@email.com" style="margin-bottom:14px;" onkeydown="authFieldsOnEnter(event)">
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الباسورد</label>
+      <input id="auth-password" type="password" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="margin-bottom:8px;" onkeydown="authFieldsOnEnter(event)">
+
+      ${state.authError ? `<div style="color:#F2795B; font-size:12.5px; margin-bottom:10px;">${esc(state.authError)}</div>` : ''}
+
+      <button class="btn-primary" style="width:100%; margin-top:10px; opacity:${state.authBusy?0.6:1};" ${state.authBusy?'disabled':''} onclick="submitAuth()">
+        ${state.authBusy ? 'جارِ التحميل...' : (isSignup ? 'إنشاء الحساب' : 'تسجيل الدخول')}
+      </button>
+
+      <div style="text-align:center; margin-top:16px; font-size:13px; color:var(--muted);">
+        ${isSignup ? 'عندك حساب بالفعل؟' : 'لسه معملتش حساب؟'}
+        <span style="color:var(--accent); cursor:pointer; font-weight:700;" onclick="switchAuthMode('${isSignup?'login':'signup'}')">${isSignup?'تسجيل الدخول':'إنشاء حساب'}</span>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* ---------------- HOME VIEW ---------------- */
@@ -946,7 +1066,7 @@ function renderImportFolders(subj, folders, depth){
 
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape' && state.modal) closeModal(); });
 
-loadData();
+render();
 </script>
 </body>
 </html>
