@@ -809,9 +809,14 @@
       function getPlatform(id) {
         return state.platforms.find((p) => p.id === id);
       }
-      function addPlatform(name, logoUrl) {
+      function addPlatform(name, logoUrl, link) {
         if (!name.trim()) return;
-        state.platforms.push({ id: uid(), name: name.trim(), logoUrl: (logoUrl || "").trim() });
+        state.platforms.push({
+          id: uid(),
+          name: name.trim(),
+          logoUrl: (logoUrl || "").trim(),
+          link: (link || "").trim(),
+        });
         saveData();
         closeModal();
         render();
@@ -825,6 +830,18 @@
         saveData();
         render();
       }
+
+      function editPlatform(id, name, logoUrl, link) {
+        const p = getPlatform(id);
+        if (!p || !name.trim()) return;
+        p.name = name.trim();
+        p.logoUrl = (logoUrl || "").trim();
+        p.link = (link || "").trim();
+        saveData();
+        closeModal();
+        render();
+      }
+
       function subjectIconHTML(subj, size) {
         size = size || 16;
         const plat = subj.platformId ? getPlatform(subj.platformId) : null;
@@ -1245,6 +1262,7 @@
           file: "f-title",
           note: "note-editor",
           platform: "platform-name-input",
+          "platform-edit": "platform-name-input",
         };
         const id = ids[state.modal.type];
         if (!id) return;
@@ -1312,8 +1330,16 @@
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
         <div style="font-weight:800; font-size:16px;">المنصات</div>
         <button onclick="openModal({type:'platform'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px;">
-          <i data-lucide="plus" style="width:14px;height:14px;"></i> منصة جديدة
-        </button>
+  <i data-lucide="plus" style="width:14px;height:14px;"></i> منصة جديدة
+</button>
+${
+  state.platforms.length > 0
+    ? `
+<button onclick="openModal({type:'link-subjects'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px;">
+  <i data-lucide="link" style="width:14px;height:14px;"></i> ربط المواد
+</button>`
+    : ""
+}
       </div>
       ${
         state.platforms.length === 0
@@ -1327,13 +1353,16 @@
           ${state.platforms
             .map(
               (p) => `
-          <div style="display:flex; flex-direction:column; align-items:center; gap:6px; width:74px; position:relative;">
-            <button onclick="deletePlatform('${p.id}')" title="حذف" style="position:absolute; top:-6px; left:-2px; background:var(--surface-3); border:none; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; color:var(--faint); cursor:pointer; z-index:1;">
+          <div style="display:flex; flex-direction:column; align-items:center; gap:6px; width:74px; position:relative; ${p.link ? "cursor:pointer;" : ""}" ${p.link ? `onclick="window.open('${esc(p.link)}', '_blank')"` : ""}>
+            <button onclick="event.stopPropagation(); deletePlatform('${p.id}')" title="حذف" style="position:absolute; top:-6px; left:-2px; background:var(--surface-3); border:none; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; color:var(--faint); cursor:pointer; z-index:1;">
               <i data-lucide="x" style="width:10px;height:10px;"></i>
             </button>
             <div style="width:52px; height:52px; border-radius:14px; background:var(--surface-3); border:1px solid var(--border-soft); display:flex; align-items:center; justify-content:center; overflow:hidden;">
               ${p.logoUrl ? `<img src="${esc(p.logoUrl)}" alt="${esc(p.name)}" style="width:100%; height:100%; object-fit:contain; padding:6px;" onerror="this.style.display='none'">` : `<i data-lucide="layout-grid" style="width:22px;height:22px; color:var(--faint);"></i>`}
             </div>
+            <button onclick="event.stopPropagation(); openModal({type:'platform-edit', platformId:'${p.id}'})" title="تعديل" style="position:absolute; top:-6px; right:-2px; background:var(--surface-3); border:none; border-radius:50%; width:18px; height:18px; display:flex; align-items:center; justify-content:center; color:var(--faint); cursor:pointer; z-index:1;">
+              <i data-lucide="pencil" style="width:9px;height:9px;"></i>
+            </button>
             <div style="font-size:11px; color:var(--muted); text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; width:100%;">${esc(p.name)}</div>
           </div>`,
             )
@@ -1686,23 +1715,30 @@
         if (m.type === "file") return renderFileModal(m);
         if (m.type === "import") return renderImportModal();
         if (m.type === "note") return renderNoteModal(m);
-        if (m.type === "platform") return renderPlatformModal();
+        if (m.type === "platform") return renderPlatformModal(m);
+        if (m.type === "platform-edit") return renderPlatformModal(m);
+        if (m.type === "link-subjects") return renderLinkSubjectsModal();
         return "";
       }
 
-      function renderPlatformModal() {
+      function renderPlatformModal(m) {
+        const editing = m && m.type === "platform-edit";
+        const p = editing ? getPlatform(m.platformId) : null;
+        if (editing && !p) return "";
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:360px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">منصة جديدة</div>
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${editing ? "تعديل المنصة" : "منصة جديدة"}</div>
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم المنصة</label>
-      <input id="platform-name-input" class="field-input" placeholder="مثال: يوتيوب، نون أكاديمي..." style="margin-bottom:16px;">
+      <input id="platform-name-input" class="field-input" placeholder="مثال: يوتيوب، نون أكاديمي..." value="${editing ? esc(p.name) : ""}" style="margin-bottom:16px;">
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط اللوجو (اختياري)</label>
-      <input id="platform-logo-input" class="field-input" placeholder="https://...">
-      <div style="color:var(--faint); font-size:11px; margin-top:6px; margin-bottom:20px;">تقدر تدور على لوجو المنصة في جوجل وتنسخ رابط الصورة هنا</div>
+      <input id="platform-logo-input" class="field-input" placeholder="https://..." value="${editing ? esc(p.logoUrl || "") : ""}" style="margin-bottom:16px;">
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط المنصة (اختياري)</label>
+      <input id="platform-link-input" class="field-input" placeholder="https://..." value="${editing ? esc(p.link || "") : ""}">
+      <div style="color:var(--faint); font-size:11px; margin-top:6px; margin-bottom:20px;">لو حطيته، الدوس على المنصة في الرئيسية هيوديك عليه في تاب جديد</div>
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
-        <button class="btn-primary" onclick="submitPlatform()">إضافة</button>
+        <button class="btn-primary" onclick="${editing ? `submitPlatformEdit('${p.id}')` : "submitPlatform()"}">${editing ? "حفظ" : "إضافة"}</button>
       </div>
     </div>
   </div>`;
@@ -1711,7 +1747,56 @@
         addPlatform(
           document.getElementById("platform-name-input").value,
           document.getElementById("platform-logo-input").value,
+          document.getElementById("platform-link-input").value,
         );
+      }
+
+      function submitPlatformEdit(id) {
+        editPlatform(
+          id,
+          document.getElementById("platform-name-input").value,
+          document.getElementById("platform-logo-input").value,
+          document.getElementById("platform-link-input").value,
+        );
+      }
+
+      function assignSubjectPlatform(subjectId, platformId) {
+        const subj = getSubject(subjectId);
+        if (!subj) return;
+        subj.platformId = platformId || null;
+        saveData();
+        render();
+      }
+      function renderLinkSubjectsModal() {
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:14px;">ربط المواد بالمنصات</div>
+      <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px; display:flex; flex-direction:column; gap:16px;">
+        ${
+          state.subjects.length === 0
+            ? `<div style="color:var(--faint); font-size:13px; text-align:center; padding:30px 0;">لا توجد مواد بعد.</div>`
+            : state.subjects
+                .map(
+                  (s) => `
+        <div>
+          <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:13.5px; margin-bottom:8px;">
+            ${subjectIconHTML(s, 16)} ${esc(s.name)}
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div class="cat-pill" data-selected="${!s.platformId}" onclick="assignSubjectPlatform('${s.id}', '')">بدون منصة</div>
+            ${state.platforms.map((p) => `<div class="cat-pill" data-selected="${s.platformId === p.id}" onclick="assignSubjectPlatform('${s.id}', '${p.id}')">${esc(p.name)}</div>`).join("")}
+          </div>
+        </div>`,
+                )
+                .join("")
+        }
+      </div>
+      <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+        <button class="btn-ghost" onclick="closeModal()">تم</button>
+      </div>
+    </div>
+  </div>`;
       }
 
       function renderNoteModal(m) {
