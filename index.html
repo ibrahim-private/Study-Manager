@@ -305,6 +305,32 @@
         font-size: 13px;
         line-height: 1.7;
         color: var(--text);
+        position: relative;
+      }
+      .rich-note-display.collapsed {
+        max-height: 96px;
+        overflow: hidden;
+      }
+      .rich-note-display.collapsed::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 36px;
+        background: linear-gradient(to top, var(--surface-3), transparent);
+        border-radius: 0 0 11px 11px;
+        pointer-events: none;
+      }
+      .note-toggle-btn {
+        display: none;
+        align-items: center;
+        gap: 4px;
+        color: var(--accent);
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        margin-top: 6px;
       }
       .rich-note-display img {
         max-width: 100%;
@@ -1056,6 +1082,34 @@
           btn.setAttribute("data-active", active ? "true" : "false");
         });
       }
+
+      function toggleNoteExpand(id) {
+        const el = document.getElementById("note-display-" + id);
+        const btn = document.getElementById("note-toggle-" + id);
+        if (!el || !btn) return;
+        const label = btn.querySelector(".note-toggle-label");
+        const icon = btn.querySelector("i");
+        const isCollapsed = el.classList.contains("collapsed");
+        if (isCollapsed) {
+          el.classList.remove("collapsed");
+          label.textContent = "عرض أقل";
+          icon.setAttribute("data-lucide", "chevron-up");
+        } else {
+          el.classList.add("collapsed");
+          label.textContent = "عرض المزيد";
+          icon.setAttribute("data-lucide", "chevron-down");
+        }
+        if (window.lucide) lucide.createIcons();
+      }
+      function initNoteToggles() {
+        document.querySelectorAll(".rich-note-display.collapsed").forEach((el) => {
+          const id = el.id.replace("note-display-", "");
+          const btn = document.getElementById("note-toggle-" + id);
+          if (!btn) return;
+          btn.style.display = el.scrollHeight > el.clientHeight + 4 ? "inline-flex" : "none";
+        });
+      }
+
       document.addEventListener("selectionchange", updateNoteToolbarState);
 
       async function handleNoteImageUpload(input) {
@@ -1253,6 +1307,7 @@
   `;
         if (window.lucide) lucide.createIcons();
         if (state.modal) focusModalInput();
+        initNoteToggles();
       }
 
       function focusModalInput() {
@@ -1439,7 +1494,15 @@ ${
         ${file.pdfLink ? `<a href="${esc(file.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
         <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${file.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
       </div>
-      ${noteExists ? `<div class="rich-note-display">${file.noteHtml || `<p>${esc(file.note)}</p>`}</div>` : ""}
+      ${
+        noteExists
+          ? `
+      <div id="note-display-${file.id}" class="rich-note-display collapsed">${file.noteHtml || `<p>${esc(file.note)}</p>`}</div>
+      <div id="note-toggle-${file.id}" class="note-toggle-btn" onclick="toggleNoteExpand('${file.id}')">
+        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" style="width:12px;height:12px;"></i>
+      </div>`
+          : ""
+      }
     </div>
     <button class="hover-actions" onclick="removeTask('${t.id}')" title="إزالة من المهام" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
       <i data-lucide="x" style="width:15px;height:15px;"></i>
@@ -1626,7 +1689,15 @@ ${
         ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
         <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
       </div>
-      ${noteExists ? `<div class="rich-note-display">${f.noteHtml || `<p>${esc(f.note)}</p>`}</div>` : ""}
+      ${
+        noteExists
+          ? `
+      <div id="note-display-${f.id}" class="rich-note-display collapsed">${f.noteHtml || `<p>${esc(f.note)}</p>`}</div>
+      <div id="note-toggle-${f.id}" class="note-toggle-btn" onclick="toggleNoteExpand('${f.id}')">
+        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" style="width:12px;height:12px;"></i>
+      </div>`
+          : ""
+      }
     </div>
     <div class="hover-actions" style="display:flex; gap:4px; flex-shrink:0;">
       <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}", fileId:"${f.id}"})' title="تعديل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
