@@ -1229,8 +1229,12 @@
         const { subj, folder, file } = resolveTask(t);
         if (!file) return;
         file.done = !file.done;
-        if (file.done) recordHistory(subj, folder, file);
-        else unrecordHistoryToday(file.id);
+        if (file.done) {
+          recordHistory(subj, folder, file);
+          state.tasks = state.tasks.filter((x) => x.id !== t.id);
+        } else {
+          unrecordHistoryToday(file.id);
+        }
         saveData();
         render();
       }
