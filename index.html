@@ -462,6 +462,21 @@
       .crumb:hover {
         color: var(--text);
       }
+
+      @keyframes flashHighlight {
+        0%,
+        100% {
+          background: transparent;
+        }
+        25%,
+        75% {
+          background: var(--accent-soft);
+        }
+      }
+      .flash-highlight {
+        animation: flashHighlight 1.6s ease;
+        border-radius: 11px;
+      }
     </style>
   </head>
   <body>
@@ -470,6 +485,8 @@
     <script>
       /* ---------------- constants ---------------- */
       const CATEGORY_COLORS = { منصة: "#5AA9E6", يوتيوب: "#EF4444", واجب: "#F2795B" };
+      const REVIEW_INTERVALS_DAYS = [1, 21, 30]; // بعد يوم، بعد 3 أسابيع، بعد شهر
+      const REVIEW_STAGE_LABELS = ["مراجعة أولى", "مراجعة تانية", "مراجعة أخيرة"];
       const SUBJECT_PALETTE = ["#6D5EF0", "#35D0A0", "#F2795B", "#5AA9E6", "#F5A623", "#B98BF0", "#EC7BB0", "#4FD1C5"];
 
       /* ---------------- firebase ---------------- */
@@ -698,6 +715,33 @@
         }
         return subj ? search(subj) : null;
       }
+
+      function findFolderPathIds(folders, targetId, trail) {
+        for (const f of folders || []) {
+          const newTrail = trail.concat(f.id);
+          if (f.id === targetId) return newTrail;
+          const res = findFolderPathIds(f.folders, targetId, newTrail);
+          if (res) return res;
+        }
+        return null;
+      }
+      function goToFileInExplorer(subjectId, folderId, fileId) {
+        const subj = getSubject(subjectId);
+        if (!subj) return;
+        state.selectedSubjectId = subjectId;
+        state.folderPath = findFolderPathIds(subj.folders, folderId, []) || [];
+        state.view = "explorer";
+        render();
+        setTimeout(() => {
+          const el = document.getElementById("file-row-" + fileId);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("flash-highlight");
+            setTimeout(() => el.classList.remove("flash-highlight"), 1600);
+          }
+        }, 60);
+      }
+
       function getPathTrail(subj, path) {
         let trail = [],
           folders = subj ? subj.folders : [];
@@ -720,6 +764,43 @@
         let files = [];
         (subj.folders || []).forEach((f) => (files = files.concat(collectFiles(f))));
         return files;
+      }
+      function collectFilesWithFolder(folder) {
+        let items = (folder.files || []).map((f) => ({ folder, file: f }));
+        (folder.folders || []).forEach((sf) => {
+          items = items.concat(collectFilesWithFolder(sf));
+        });
+        return items;
+      }
+      function subjectAllFilesWithFolder(subj) {
+        let items = [];
+        (subj.folders || []).forEach((f) => {
+          items = items.concat(collectFilesWithFolder(f));
+        });
+        return items;
+      }
+      function getDueReviews() {
+        const due = [];
+        const now = new Date();
+        state.subjects.forEach((subj) => {
+          subjectAllFilesWithFolder(subj).forEach(({ folder, file: f }) => {
+            if (!f.done || !f.completedAt) return;
+            const stage = f.reviewStage || 0;
+            if (stage >= REVIEW_INTERVALS_DAYS.length) return;
+            const dueDate = new Date(new Date(f.completedAt).getTime() + REVIEW_INTERVALS_DAYS[stage] * 86400000);
+            if (dueDate <= now) due.push({ subj, folder, file: f, stage });
+          });
+        });
+        return due;
+      }
+      function markReviewDone(subjectId, folderId, fileId) {
+        const subj = getSubject(subjectId);
+        const folder = getFolder(subj, folderId);
+        const f = getFile(folder, fileId);
+        if (!f) return;
+        f.reviewStage = (f.reviewStage || 0) + 1;
+        saveData();
+        render();
       }
       function subjectStats(subj) {
         const files = subjectAllFiles(subj);
@@ -941,8 +1022,18 @@
         const folder = getFolder(subj, folderId);
         const f = getFile(folder, fileId);
         f.done = !f.done;
-        if (f.done) recordHistory(subj, folder, f);
-        else unrecordHistoryToday(f.id);
+        if (f.done) {
+          recordHistory(subj, folder, f);
+          f.completedAt = new Date().toISOString();
+          f.reviewStage = 0;
+          state.tasks = state.tasks.filter(
+            (t) => !(t.subjectId === subjectId && t.folderId === folderId && t.fileId === fileId),
+          );
+        } else {
+          unrecordHistoryToday(f.id);
+          f.completedAt = null;
+          f.reviewStage = 0;
+        }
         saveData();
         render();
       }
@@ -1231,9 +1322,13 @@
         file.done = !file.done;
         if (file.done) {
           recordHistory(subj, folder, file);
+          file.completedAt = new Date().toISOString();
+          file.reviewStage = 0;
           state.tasks = state.tasks.filter((x) => x.id !== t.id);
         } else {
           unrecordHistoryToday(file.id);
+          file.completedAt = null;
+          file.reviewStage = 0;
         }
         saveData();
         render();
@@ -1383,6 +1478,50 @@
       }
 
       /* ---------------- HOME VIEW ---------------- */
+
+      function renderDueReviewsSection() {
+        const due = getDueReviews();
+        return `
+    <div class="dash-card" style="padding:18px; margin-bottom:20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-weight:800; font-size:16px; display:flex; align-items:center; gap:8px;">
+          <i data-lucide="brain" style="width:17px;height:17px; color:var(--success);"></i> مراجعات مستحقة
+        </div>
+        ${due.length > 0 ? `<span class="mono" style="font-size:11.5px; color:var(--faint);">${due.length} ${due.length === 1 ? "مراجعة" : "مراجعات"}</span>` : ""}
+      </div>
+      ${
+        due.length === 0
+          ? `
+        <div style="text-align:center; color:var(--faint); padding:20px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+          <div style="font-size:13px;">مفيش مراجعات مستحقة دلوقتي — هتظهر هنا تلقائي بعد يوم، 3 أسابيع، وشهر من إنجاز كل ملف</div>
+        </div>
+      `
+          : `
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          ${due
+            .map(
+              (d) => `
+          <div class="file-row" style="display:flex; align-items:center; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; cursor:pointer;" onclick="goToFileInExplorer('${d.subj.id}','${d.folder.id}','${d.file.id}')">
+            <div style="width:22px; height:22px; border-radius:7px; background:var(--success-soft); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+              <i data-lucide="brain" style="width:13px;height:13px; color:var(--success);"></i>
+            </div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(d.file.title)}</div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
+                <span class="badge" style="background:var(--success-soft); color:var(--success);">${esc(REVIEW_STAGE_LABELS[d.stage] || "مراجعة")}</span>
+                <span style="font-size:11.5px; color:var(--faint);">${esc(d.subj.name)} / ${esc(d.folder.name)}</span>
+              </div>
+            </div>
+            <button onclick="event.stopPropagation(); markReviewDone('${d.subj.id}','${d.folder.id}','${d.file.id}')" class="btn-primary" style="padding:7px 14px; font-size:12.5px; flex-shrink:0;">راجعتها</button>
+          </div>`,
+            )
+            .join("")}
+        </div>
+      `
+      }
+    </div>`;
+      }
+
       function renderPlatformsSection() {
         return `
     <div class="dash-card" style="padding:18px; margin-bottom:20px;">
@@ -1453,6 +1592,7 @@ ${
       </div>
     </div>
 
+    ${renderDueReviewsSection()}
     ${renderPlatformsSection()}
 
     <div class="dash-card" style="padding:18px;">
@@ -1680,7 +1820,7 @@ ${
         );
         const noteExists = hasNoteContent(f);
         return `
-  <div class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
+  <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
     <div class="check-btn" data-done="${f.done}" onclick="toggleFile('${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
       ${f.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ""}
     </div>
