@@ -782,13 +782,15 @@
       function getDueReviews() {
         const due = [];
         const now = new Date();
+        const todayOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         state.subjects.forEach((subj) => {
           subjectAllFilesWithFolder(subj).forEach(({ folder, file: f }) => {
             if (!f.done || !f.completedAt) return;
             const stage = f.reviewStage || 0;
             if (stage >= REVIEW_INTERVALS_DAYS.length) return;
             const dueDate = new Date(new Date(f.completedAt).getTime() + REVIEW_INTERVALS_DAYS[stage] * 86400000);
-            if (dueDate <= now) due.push({ subj, folder, file: f, stage });
+            const dueDateOnly = new Date(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate());
+            if (dueDateOnly <= todayOnly) due.push({ subj, folder, file: f, stage });
           });
         });
         return due;
@@ -1916,6 +1918,9 @@ ${
         ${h.time ? `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(h.time)}</span>` : ""}
       </div>
     </div>
+    <button class="hover-actions" onclick="openModal({type:'history-edit', id:'${h.id}'})" title="تعديل تاريخ ووقت المهمة" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
+      <i data-lucide="pencil" style="width:15px;height:15px;"></i>
+    </button>
     <button class="hover-actions" onclick="removeHistoryEntry('${h.id}')" title="حذف من السجل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
       <i data-lucide="x" style="width:15px;height:15px;"></i>
     </button>
@@ -1933,7 +1938,56 @@ ${
         if (m.type === "platform") return renderPlatformModal(m);
         if (m.type === "platform-edit") return renderPlatformModal(m);
         if (m.type === "link-subjects") return renderLinkSubjectsModal();
+        if (m.type === "history-edit") return renderHistoryEditModal(m);
         return "";
+      }
+
+      function renderHistoryEditModal(m) {
+        const h = (state.history || []).find((x) => x.id === m.id);
+        if (!h) return "";
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:340px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">تعديل تاريخ ووقت الإنجاز</div>
+      <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(h.title)}</div>
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">التاريخ</label>
+      <input id="hist-date-input" type="date" class="field-input" value="${esc(h.date || "")}" style="margin-bottom:16px;">
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الساعة</label>
+      <input id="hist-time-input" type="time" class="field-input" value="${esc(h.time || "")}" style="margin-bottom:20px;">
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="saveHistoryEdit('${h.id}')">حفظ</button>
+      </div>
+    </div>
+  </div>`;
+      }
+      function findFileById(fileId) {
+        for (const subj of state.subjects) {
+          for (const { file } of subjectAllFilesWithFolder(subj)) {
+            if (file.id === fileId) return file;
+          }
+        }
+        return null;
+      }
+      function saveHistoryEdit(id) {
+        const h = (state.history || []).find((x) => x.id === id);
+        if (!h) return;
+        const dateVal = document.getElementById("hist-date-input").value;
+        const timeVal = document.getElementById("hist-time-input").value;
+        if (!dateVal) {
+          document.getElementById("hist-date-input").focus();
+          return;
+        }
+        h.date = dateVal;
+        h.time = timeVal || "";
+        const file = findFileById(h.fileId);
+        if (file && file.completedAt) {
+          const dt = new Date(`${dateVal}T${timeVal || "00:00"}:00`);
+          if (!isNaN(dt.getTime())) file.completedAt = dt.toISOString();
+        }
+        saveData();
+        closeModal();
+        render();
       }
 
       function renderPlatformModal(m) {
