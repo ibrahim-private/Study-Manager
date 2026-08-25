@@ -427,6 +427,62 @@
         content: attr(data-placeholder);
         color: var(--faint);
       }
+      .note-frac {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        vertical-align: middle;
+        direction: ltr;
+        margin: 0 3px;
+        font-size: 0.92em;
+        line-height: 1.25;
+      }
+      .note-frac-num,
+      .note-frac-den {
+        padding: 0 4px;
+        min-width: 8px;
+        text-align: center;
+      }
+      .note-frac-num {
+        border-bottom: 1.6px solid currentColor;
+      }
+      .note-editor sub,
+      .note-editor sup,
+      .rich-note-display sub,
+      .rich-note-display sup {
+        direction: ltr;
+        unicode-bidi: isolate;
+      }
+      .note-symbols-row {
+        display: none;
+        flex-wrap: wrap;
+        gap: 4px;
+        background: var(--surface-3);
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 7px;
+        margin-bottom: 8px;
+      }
+      .note-symbols-row[data-open="true"] {
+        display: flex;
+      }
+      .note-sym-btn {
+        background: var(--surface-2);
+        border: 1px solid var(--border-soft);
+        color: var(--text);
+        min-width: 28px;
+        height: 26px;
+        padding: 0 5px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        direction: ltr;
+        font-family: "IBM Plex Mono", monospace;
+      }
+      .note-sym-btn:hover {
+        background: var(--border);
+        border-color: var(--accent);
+      }
       .import-row {
         display: flex;
         align-items: center;
@@ -1160,6 +1216,29 @@
         document.execCommand(cmd, false, null);
         updateNoteToolbarState();
       }
+      function insertNoteText(text) {
+        const editor = document.getElementById("note-editor");
+        if (editor) editor.focus();
+        document.execCommand("insertText", false, text);
+      }
+      function insertNoteFraction() {
+        const num = prompt("البسط (الرقم اللي فوق شرطة الكسر):", "");
+        if (num === null) return;
+        const den = prompt("المقام (الرقم اللي تحت شرطة الكسر):", "");
+        if (den === null) return;
+        const n = esc(num.trim() || "a");
+        const d = esc(den.trim() || "b");
+        const html = `<span class="note-frac">&nbsp;<span class="note-frac-num">${n}</span><span class="note-frac-den">${d}</span>&nbsp;</span>&nbsp;`;
+        const editor = document.getElementById("note-editor");
+        if (editor) editor.focus();
+        document.execCommand("insertHTML", false, html);
+      }
+      function toggleNoteSymbols() {
+        const row = document.getElementById("note-symbols-row");
+        if (!row) return;
+        const open = row.getAttribute("data-open") === "true";
+        row.setAttribute("data-open", open ? "false" : "true");
+      }
       function updateNoteToolbarState() {
         const editor = document.getElementById("note-editor");
         const toolbar = document.getElementById("note-toolbar");
@@ -1236,6 +1315,87 @@
             return;
           }
         }
+        const html = e.clipboardData && e.clipboardData.getData("text/html");
+        if (html && html.trim()) {
+          e.preventDefault();
+          const cleaned = cleanPastedHTML(html);
+          const editor = document.getElementById("note-editor");
+          if (editor) editor.focus();
+          document.execCommand("insertHTML", false, cleaned || "");
+          return;
+        }
+        // no rich HTML available (e.g. plain unicode text) — let the browser's
+        // default plain-text paste happen, this already preserves things like
+        // copied ⇌ ² ₂ Δ characters since they're just normal text.
+      }
+      // keeps a formula/fraction's structure (bold, sub/sup, tables, images,
+      // links, our own note-frac fraction spans) when pasted from elsewhere,
+      // while stripping fonts/colors/junk markup so notes stay consistent.
+      function cleanPastedHTML(html) {
+        const allowedTags = new Set([
+          "B",
+          "STRONG",
+          "I",
+          "EM",
+          "U",
+          "SUB",
+          "SUP",
+          "BR",
+          "P",
+          "DIV",
+          "UL",
+          "OL",
+          "LI",
+          "SPAN",
+          "IMG",
+          "A",
+          "TABLE",
+          "TBODY",
+          "TR",
+          "TD",
+        ]);
+        const div = document.createElement("div");
+        div.innerHTML = html;
+        div
+          .querySelectorAll("script, style, iframe, object, embed, meta, link, head, title")
+          .forEach((el) => el.remove());
+        const cleanNode = (node) => {
+          [...node.childNodes].forEach((child) => {
+            if (child.nodeType === 1) {
+              if (!allowedTags.has(child.tagName)) {
+                while (child.firstChild) child.parentNode.insertBefore(child.firstChild, child);
+                child.parentNode.removeChild(child);
+                return;
+              }
+              const isFracPart =
+                child.classList.contains("note-frac") ||
+                child.classList.contains("note-frac-num") ||
+                child.classList.contains("note-frac-den");
+              [...child.attributes].forEach((attr) => {
+                const name = attr.name.toLowerCase();
+                if (name === "class" && isFracPart) return;
+                if (
+                  child.tagName === "IMG" &&
+                  name === "src" &&
+                  !attr.value.trim().toLowerCase().startsWith("javascript:")
+                )
+                  return;
+                if (
+                  child.tagName === "A" &&
+                  name === "href" &&
+                  !attr.value.trim().toLowerCase().startsWith("javascript:")
+                )
+                  return;
+                child.removeAttribute(attr.name);
+              });
+              cleanNode(child);
+            } else if (child.nodeType !== 3) {
+              child.remove();
+            }
+          });
+        };
+        cleanNode(div);
+        return div.innerHTML;
       }
       function submitNote(subjectId, folderId, fileId) {
         const editor = document.getElementById("note-editor");
@@ -2092,11 +2252,55 @@ ${
         <button type="button" class="note-tool-btn" data-cmd="insertUnorderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertUnorderedList')" title="قائمة نقطية"><i data-lucide="list" style="width:15px;height:15px;"></i></button>
         <button type="button" class="note-tool-btn" data-cmd="insertOrderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertOrderedList')" title="قائمة مرقمة"><i data-lucide="list-ordered" style="width:15px;height:15px;"></i></button>
         <div style="width:1px; align-self:stretch; background:var(--border); margin:2px 2px;"></div>
+        <button type="button" class="note-tool-btn" data-cmd="superscript" onmousedown="event.preventDefault()" onclick="noteExec('superscript')" title="أس (X²) — للأسس في الرياضيات"><span class="mono" style="font-size:12px;font-weight:700;">X²</span></button>
+        <button type="button" class="note-tool-btn" data-cmd="subscript" onmousedown="event.preventDefault()" onclick="noteExec('subscript')" title="دليل سفلي (X₂) — لأرقام المعادلات الكيميائية"><span class="mono" style="font-size:12px;font-weight:700;">X₂</span></button>
+        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="insertNoteFraction()" title="كسر بشرطة (a/b) — لقوانين الفيزياء"><span class="mono" style="font-size:11px;font-weight:700;">a/b</span></button>
+        <div style="width:1px; align-self:stretch; background:var(--border); margin:2px 2px;"></div>
+        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="toggleNoteSymbols()" title="رموز رياضية وكيميائية"><i data-lucide="sigma" style="width:15px;height:15px;"></i></button>
         <button type="button" class="note-tool-btn" onmousedown="event.preventDefault(); saveNoteSelection();" onclick="document.getElementById('note-image-input').click()" title="رفع صورة"><i data-lucide="image-plus" style="width:15px;height:15px;"></i></button>
         <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="noteExec('removeFormat')" title="مسح التنسيق"><i data-lucide="eraser" style="width:15px;height:15px;"></i></button>
       </div>
 
-      <div id="note-editor" class="note-editor" contenteditable="true" dir="auto" data-placeholder="اكتب ملاحظتك هنا... تقدر تلصق صورة (Ctrl+V) أو ترفعها من زرار الصورة" onpaste="handleNotePaste(event)">${initialContent}</div>
+      <div id="note-symbols-row" class="note-symbols-row" data-open="false">
+        ${[
+          "→",
+          "⇌",
+          "↔",
+          "↑",
+          "↓",
+          "Δ",
+          "×",
+          "÷",
+          "±",
+          "√",
+          "°",
+          "≈",
+          "≠",
+          "≤",
+          "≥",
+          "∞",
+          "·",
+          "π",
+          "θ",
+          "λ",
+          "μ",
+          "α",
+          "β",
+          "γ",
+          "σ",
+          "φ",
+          "Ω",
+          "∴",
+          "∵",
+        ]
+          .map(
+            (s) =>
+              `<button type="button" class="note-sym-btn" onmousedown="event.preventDefault()" onclick="insertNoteText('${s}')">${s}</button>`,
+          )
+          .join("")}
+      </div>
+
+      <div id="note-editor" class="note-editor" contenteditable="true" dir="auto" data-placeholder="اكتب ملاحظتك هنا... تقدر تلصق صورة أو تنسخ معادلة/كسر من مكان تاني وتعمله لصق (Ctrl+V)" onpaste="handleNotePaste(event)">${initialContent}</div>
       <input type="file" id="note-image-input" accept="image/*" style="display:none" onchange="handleNoteImageUpload(this)">
       <div style="color:var(--faint); font-size:11px; margin-top:6px;">الصور بتتضغط تلقائيًا قبل الحفظ عشان توفر مساحة</div>
 
