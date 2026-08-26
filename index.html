@@ -257,6 +257,9 @@
       .file-row:hover .hover-actions {
         opacity: 1;
       }
+      .folder-card:hover .hover-actions {
+        opacity: 1;
+      }
       .dash-card {
         background: var(--surface);
         border: 1px solid var(--border-soft);
@@ -570,6 +573,7 @@
         folderPath: [], // array of folder ids, from subject root down to the currently open folder
         modal: null,
         loaded: false,
+        taskFilter: "all", // 'all' | 'pending' | 'done' — filters the "المهام" list on the home screen
         // --- auth ---
         authChecked: false, // becomes true once Firebase tells us whether a user is signed in
         user: null, // {uid, email}
@@ -1060,6 +1064,86 @@
         saveData();
         render();
       }
+      function renameFolder(subjectId, folderId, name) {
+        if (!name.trim()) return;
+        const subj = getSubject(subjectId);
+        const folder = getFolder(subj, folderId);
+        if (!folder) return;
+        folder.name = name.trim();
+        saveData();
+        closeModal();
+      }
+
+      /* ---------------- move (drag-free "file explorer" relocate: files & folders can be
+         moved to any folder / subject. Review progress (done/completedAt/reviewStage) lives
+         on the file object itself and getDueReviews() walks the live tree each render, so a
+         moved file's due-review always resolves to its new, correct location automatically.
+         Imported tasks store their own subjectId/folderId snapshot though, so those are
+         re-pointed here to keep "المهام" pointing at the right place after a move. ---------------- */
+      function collectDescendantFolderIds(folder) {
+        let ids = [folder.id];
+        (folder.folders || []).forEach((sf) => {
+          ids = ids.concat(collectDescendantFolderIds(sf));
+        });
+        return ids;
+      }
+      function moveFile(subjectId, folderId, fileId, targetSubjectId, targetFolderId) {
+        const subj = getSubject(subjectId);
+        const folder = getFolder(subj, folderId);
+        const file = getFile(folder, fileId);
+        const targetSubj = getSubject(targetSubjectId);
+        const targetFolder = targetSubj ? getFolder(targetSubj, targetFolderId) : null;
+        if (!file || !targetFolder) return;
+        if (targetFolder === folder) {
+          closeModal();
+          return;
+        }
+        folder.files = folder.files.filter((f) => f.id !== fileId);
+        if (!targetFolder.files) targetFolder.files = [];
+        targetFolder.files.push(file);
+        state.tasks.forEach((t) => {
+          if (t.subjectId === subjectId && t.folderId === folderId && t.fileId === fileId) {
+            t.subjectId = targetSubjectId;
+            t.folderId = targetFolderId;
+          }
+        });
+        state.selectedSubjectId = targetSubjectId;
+        state.folderPath = findFolderPathIds(targetSubj.folders, targetFolderId, []) || [];
+        saveData();
+        closeModal();
+        render();
+      }
+      function moveFolder(subjectId, folderId, targetSubjectId, targetParentFolderId) {
+        const subj = getSubject(subjectId);
+        const folder = getFolder(subj, folderId);
+        if (!folder) return;
+        const excluded = collectDescendantFolderIds(folder);
+        if (targetParentFolderId && excluded.includes(targetParentFolderId)) return;
+        const container = findFolderContainer(subj, folderId);
+        if (!container) return;
+        const targetSubj = getSubject(targetSubjectId);
+        if (!targetSubj) return;
+        const targetContainer = targetParentFolderId ? getFolder(targetSubj, targetParentFolderId) : targetSubj;
+        if (!targetContainer) return;
+        if (targetContainer === container) {
+          closeModal();
+          return;
+        }
+        container.folders = container.folders.filter((f) => f.id !== folderId);
+        if (!targetContainer.folders) targetContainer.folders = [];
+        targetContainer.folders.push(folder);
+        if (targetSubjectId !== subjectId) {
+          const fileIds = new Set(collectFiles(folder).map((f) => f.id));
+          state.tasks.forEach((t) => {
+            if (t.subjectId === subjectId && fileIds.has(t.fileId)) t.subjectId = targetSubjectId;
+          });
+        }
+        state.selectedSubjectId = targetSubjectId;
+        state.folderPath = findFolderPathIds(targetSubj.folders, folderId, []) || [];
+        saveData();
+        closeModal();
+        render();
+      }
 
       function saveFile(subjectId, folderId, fileId, data) {
         const subj = getSubject(subjectId);
@@ -1084,9 +1168,6 @@
           recordHistory(subj, folder, f);
           f.completedAt = new Date().toISOString();
           f.reviewStage = 0;
-          state.tasks = state.tasks.filter(
-            (t) => !(t.subjectId === subjectId && t.folderId === folderId && t.fileId === fileId),
-          );
         } else {
           unrecordHistoryToday(f.id);
           f.completedAt = null;
@@ -1478,6 +1559,22 @@
         saveData();
         render();
       }
+      function setTaskFilter(f) {
+        state.taskFilter = f;
+        render();
+      }
+      function clearCompletedTasks() {
+        const doneTasks = state.tasks.filter((t) => {
+          const { file } = resolveTask(t);
+          return file && file.done;
+        });
+        if (doneTasks.length === 0) return;
+        if (!confirm(`مسح ${doneTasks.length} مهمة مكتملة من اللستة؟ (السجل هيفضل محفوظ)`)) return;
+        const doneIds = new Set(doneTasks.map((t) => t.id));
+        state.tasks = state.tasks.filter((t) => !doneIds.has(t.id));
+        saveData();
+        render();
+      }
       function toggleTaskDone(t) {
         const { subj, folder, file } = resolveTask(t);
         if (!file) return;
@@ -1486,7 +1583,6 @@
           recordHistory(subj, folder, file);
           file.completedAt = new Date().toISOString();
           file.reviewStage = 0;
-          state.tasks = state.tasks.filter((x) => x.id !== t.id);
         } else {
           unrecordHistoryToday(file.id);
           file.completedAt = null;
@@ -1735,6 +1831,17 @@ ${
 
       function renderHome() {
         const t = taskStats();
+        const doneCount = state.tasks.reduce((n, tk) => {
+          const { file } = resolveTask(tk);
+          return n + (file && file.done ? 1 : 0);
+        }, 0);
+        const filteredTasks = state.tasks.filter((tk) => {
+          const { file } = resolveTask(tk);
+          if (!file) return false;
+          if (state.taskFilter === "pending") return !file.done;
+          if (state.taskFilter === "done") return file.done;
+          return true;
+        });
         return `
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
       <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
@@ -1758,7 +1865,7 @@ ${
     ${renderPlatformsSection()}
 
     <div class="dash-card" style="padding:18px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
         <div style="font-weight:800; font-size:16px;">المهام</div>
         <button onclick="openModal({type:'import'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
           <i data-lucide="plus" style="width:15px;height:15px;"></i> استيراد ملف كمهمة
@@ -1773,9 +1880,33 @@ ${
         </div>
       `
           : `
-        <div style="display:flex; flex-direction:column; gap:6px;">
-          ${state.tasks.map(taskRow).join("")}
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; gap:6px;">
+            <div class="cat-pill" data-selected="${state.taskFilter === "all"}" onclick="setTaskFilter('all')">الكل (${state.tasks.length})</div>
+            <div class="cat-pill" data-selected="${state.taskFilter === "pending"}" onclick="setTaskFilter('pending')">متبقي (${state.tasks.length - doneCount})</div>
+            <div class="cat-pill" data-selected="${state.taskFilter === "done"}" onclick="setTaskFilter('done')">مكتمل (${doneCount})</div>
+          </div>
+          ${
+            doneCount > 0
+              ? `<button onclick="clearCompletedTasks()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+                  <i data-lucide="eraser" style="width:13px;height:13px;"></i> امسح المكتملة
+                </button>`
+              : ""
+          }
         </div>
+        ${
+          filteredTasks.length === 0
+            ? `
+          <div style="text-align:center; color:var(--faint); padding:30px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+            <div style="font-size:13px;">مفيش مهام في الفلتر ده</div>
+          </div>
+        `
+            : `
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            ${filteredTasks.map(taskRow).join("")}
+          </div>
+        `
+        }
       `
       }
     </div>
@@ -1947,9 +2078,17 @@ ${
             const subCount = (f.folders || []).length;
             return `
           <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="openFolder('${f.id}')">
-            <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="position:absolute; top:8px; left:8px; background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
-              <i data-lucide="x" style="width:13px;height:13px;"></i>
-            </button>
+            <div class="hover-actions" style="position:absolute; top:6px; left:6px; display:flex; gap:2px;">
+              <button onclick="event.stopPropagation(); openModal({type:'folder', subjectId:'${subj.id}', parentFolderId:${folder ? `'${folder.id}'` : "null"}, folderId:'${f.id}'})" title="إعادة تسمية" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
+                <i data-lucide="pencil" style="width:13px;height:13px;"></i>
+              </button>
+              <button onclick="event.stopPropagation(); openModal({type:'move-folder', subjectId:'${subj.id}', folderId:'${f.id}'})" title="نقل الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
+                <i data-lucide="move" style="width:13px;height:13px;"></i>
+              </button>
+              <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
+                <i data-lucide="x" style="width:13px;height:13px;"></i>
+              </button>
+            </div>
             ${folderIconSVG(subj.color, 30)}
             <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.name)}</div>
             <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${done}/${files.length} ملف${subCount ? " · " + subCount + " فولدر فرعي" : ""}</div>
@@ -2008,6 +2147,9 @@ ${
     <div class="hover-actions" style="display:flex; gap:4px; flex-shrink:0;">
       <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}", fileId:"${f.id}"})' title="تعديل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
         <i data-lucide="pencil" style="width:14px;height:14px;"></i>
+      </button>
+      <button onclick="openModal({type:'move-file', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" title="نقل الملف" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
+        <i data-lucide="move" style="width:14px;height:14px;"></i>
       </button>
       <button onclick="deleteFile('${subj.id}','${folder.id}','${f.id}')" title="حذف" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
         <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
@@ -2094,6 +2236,7 @@ ${
         if (m.type === "folder") return renderFolderModal(m);
         if (m.type === "file") return renderFileModal(m);
         if (m.type === "import") return renderImportModal();
+        if (m.type === "move-file" || m.type === "move-folder") return renderMoveModal(m);
         if (m.type === "note") return renderNoteModal(m);
         if (m.type === "platform") return renderPlatformModal(m);
         if (m.type === "platform-edit") return renderPlatformModal(m);
@@ -2359,18 +2502,24 @@ ${
         const subj = getSubject(m.subjectId);
         const parentFolder = m.parentFolderId ? getFolder(subj, m.parentFolderId) : null;
         const contextLabel = parentFolder ? `${esc(subj.name)} / ${esc(parentFolder.name)}` : esc(subj.name);
+        const existing = m.folderId ? getFolder(subj, m.folderId) : null;
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:360px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">فولدر جديد <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${contextLabel}</span></div>
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${existing ? "تعديل اسم الفولدر" : "فولدر جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${contextLabel}</span></div>
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم الفولدر</label>
-      <input id="folder-name-input" class="field-input" placeholder="مثال: المحاضرات، الواجبات..." style="margin-bottom:20px;">
+      <input id="folder-name-input" class="field-input" placeholder="مثال: المحاضرات، الواجبات..." value="${existing ? esc(existing.name) : ""}" style="margin-bottom:20px;">
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
-        <button class="btn-primary" onclick="addFolder('${subj.id}', ${m.parentFolderId ? `'${m.parentFolderId}'` : "null"}, document.getElementById('folder-name-input').value)">إضافة</button>
+        <button class="btn-primary" onclick="submitFolder('${subj.id}', ${m.parentFolderId ? `'${m.parentFolderId}'` : "null"}, ${existing ? `'${existing.id}'` : "null"})">${existing ? "حفظ" : "إضافة"}</button>
       </div>
     </div>
   </div>`;
+      }
+      function submitFolder(subjectId, parentFolderId, folderId) {
+        const name = document.getElementById("folder-name-input").value;
+        if (folderId) renameFolder(subjectId, folderId, name);
+        else addFolder(subjectId, parentFolderId, name);
       }
 
       let pickedCategory = null;
@@ -2490,6 +2639,72 @@ ${
       </div>`;
           })
           .join("");
+      }
+
+      /* ---------------- move modal (works for both files and folders — shows every subject
+         then its folder tree; clicking a valid destination moves the item there immediately) ---------------- */
+      function renderMoveModal(m) {
+        const isFolder = m.type === "move-folder";
+        const subj = getSubject(m.subjectId);
+        if (!subj) return "";
+        const sourceFolder = getFolder(subj, m.folderId);
+        if (!sourceFolder) return "";
+        const itemLabel = isFolder ? sourceFolder.name : (getFile(sourceFolder, m.fileId) || {}).title || "";
+        if (!isFolder && !getFile(sourceFolder, m.fileId)) return "";
+        const excludeFolderIds = isFolder ? collectDescendantFolderIds(sourceFolder) : [];
+        const container = isFolder ? findFolderContainer(subj, m.folderId) : null;
+        const currentContainerId = isFolder ? (container === subj ? null : container.id) : m.folderId;
+
+        function moveCall(targetSubjectId, targetFolderId) {
+          const tf = targetFolderId ? `'${targetFolderId}'` : "null";
+          return isFolder
+            ? `moveFolder('${m.subjectId}','${m.folderId}','${targetSubjectId}',${tf})`
+            : `moveFile('${m.subjectId}','${m.folderId}','${m.fileId}','${targetSubjectId}',${tf})`;
+        }
+
+        function renderTree(subjParam, folders, depth) {
+          return (folders || [])
+            .map((f) => {
+              if (excludeFolderIds.includes(f.id)) return "";
+              const isCurrent = subjParam.id === m.subjectId && f.id === currentContainerId;
+              return `
+        <div class="import-row" style="padding-right:${10 + depth * 16}px; cursor:${isCurrent ? "default" : "pointer"}; opacity:${isCurrent ? 0.5 : 1};" ${isCurrent ? "" : `onclick="${moveCall(subjParam.id, f.id)}"`}>
+          <span style="display:flex; align-items:center; gap:7px; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            <i data-lucide="folder" style="width:14px;height:14px; color:var(--faint); flex-shrink:0;"></i> ${esc(f.name)}
+          </span>
+          ${isCurrent ? `<span style="font-size:10.5px; color:var(--faint); flex-shrink:0;">هنا حاليًا</span>` : ""}
+        </div>
+        ${renderTree(subjParam, f.folders, depth + 1)}`;
+            })
+            .join("");
+        }
+
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:440px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${isFolder ? "نقل الفولدر" : "نقل الملف"}</div>
+      <div style="color:var(--muted); font-size:12.5px; margin-bottom:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(itemLabel)}</div>
+      <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px;">
+        ${state.subjects
+          .map((s) => {
+            const rootIsCurrent = isFolder && s.id === m.subjectId && currentContainerId === null;
+            const rootClickable = isFolder && !rootIsCurrent;
+            return `
+        <div style="margin-bottom:10px;">
+          <div class="import-row" style="font-weight:700; font-size:13.5px; color:${s.color}; cursor:${rootClickable ? "pointer" : "default"}; opacity:${rootIsCurrent ? 0.5 : 1};" ${rootClickable ? `onclick="${moveCall(s.id, null)}"` : ""}>
+            <span style="display:flex; align-items:center; gap:7px;">${subjectIconHTML(s, 15)} ${esc(s.name)}</span>
+            ${isFolder ? `<span style="font-size:10.5px; color:var(--faint); flex-shrink:0;">${rootIsCurrent ? "هنا حاليًا" : "جذر المادة"}</span>` : ""}
+          </div>
+          ${renderTree(s, s.folders, 1)}
+        </div>`;
+          })
+          .join("")}
+      </div>
+      <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+      </div>
+    </div>
+  </div>`;
       }
 
       document.addEventListener("keydown", (e) => {
