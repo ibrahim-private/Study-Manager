@@ -260,6 +260,16 @@
       .folder-card:hover .hover-actions {
         opacity: 1;
       }
+      .mini-bar {
+        height: 6px;
+        border-radius: 4px;
+        background: var(--border-soft);
+        overflow: hidden;
+      }
+      .mini-bar > div {
+        height: 100%;
+        border-radius: 4px;
+      }
       .dash-card {
         background: var(--surface);
         border: 1px solid var(--border-soft);
@@ -543,7 +553,15 @@
 
     <script>
       /* ---------------- constants ---------------- */
-      const CATEGORY_COLORS = { منصة: "#5AA9E6", يوتيوب: "#EF4444", واجب: "#F2795B" };
+      const DEFAULT_CATEGORIES = [
+        { id: "cat-platform", name: "منصة", color: "#5AA9E6" },
+        { id: "cat-youtube", name: "يوتيوب", color: "#EF4444" },
+        { id: "cat-hw", name: "واجب", color: "#F2795B" },
+      ];
+      function getCategoryColor(name) {
+        const c = (state.categories || []).find((x) => x.name === name);
+        return c ? c.color : "var(--accent)";
+      }
       const REVIEW_INTERVALS_DAYS = [1, 21, 30]; // بعد يوم، بعد 3 أسابيع، بعد شهر
       const REVIEW_STAGE_LABELS = ["مراجعة أولى", "مراجعة تانية", "مراجعة أخيرة"];
       const SUBJECT_PALETTE = ["#6D5EF0", "#35D0A0", "#F2795B", "#5AA9E6", "#F5A623", "#B98BF0", "#EC7BB0", "#4FD1C5"];
@@ -568,12 +586,16 @@
         tasks: [], // {id, subjectId, folderId, fileId}
         history: [], // {id, date:'YYYY-MM-DD', time:'HH:MM', fileId, title, category, subjectName, subjectColor, folderName}
         platforms: [], // {id, name, logoUrl}
-        view: "home", // 'home' | 'explorer' | 'history'
+        view: "home", // 'home' | 'explorer' | 'due-reviews' | 'history' | 'settings'
         selectedSubjectId: null,
         folderPath: [], // array of folder ids, from subject root down to the currently open folder
         modal: null,
         loaded: false,
-        taskFilter: "all", // 'all' | 'pending' | 'done' — filters the "المهام" list on the home screen
+        taskFilter: "all", // 'all' | 'pending' | 'done'
+        categories: [], // {id, name, color} — user-defined file categories
+        settingsPwBusy: false,
+        settingsPwMsg: "",
+        settingsPwMsgType: "error", // 'error' | 'success' — filters the "المهام" list on the home screen
         // --- auth ---
         authChecked: false, // becomes true once Firebase tells us whether a user is signed in
         user: null, // {uid, email}
@@ -594,7 +616,13 @@
       }
 
       function seedData() {
-        return { subjects: [], tasks: [], history: [], platforms: [] };
+        return {
+          subjects: [],
+          tasks: [],
+          history: [],
+          platforms: [],
+          categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
+        };
       }
 
       /* ---------------- date helpers ---------------- */
@@ -624,17 +652,21 @@
             state.tasks = data.tasks || [];
             state.history = data.history || [];
             state.platforms = data.platforms || [];
+            state.categories =
+              data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c }));
           } else {
             const seed = seedData();
             state.subjects = seed.subjects;
             state.tasks = seed.tasks;
             state.history = seed.history || [];
             state.platforms = seed.platforms || [];
+            state.categories = seed.categories;
             await docRef.set({
               subjects: state.subjects,
               tasks: state.tasks,
               history: state.history,
               platforms: state.platforms,
+              categories: state.categories,
             });
           }
         } catch (e) {
@@ -643,6 +675,7 @@
           state.tasks = [];
           state.history = [];
           state.platforms = [];
+          state.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }));
         }
         state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
         state.folderPath = [];
@@ -657,6 +690,7 @@
           tasks: state.tasks,
           history: state.history,
           platforms: state.platforms,
+          categories: state.categories,
         };
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
@@ -864,6 +898,22 @@
         saveData();
         render();
       }
+      function reviewNoticeStorageKey() {
+        return `study-review-notice-dismissed-${state.user ? state.user.uid : "anon"}-${todayStr()}`;
+      }
+      function isReviewNoticeDismissed() {
+        try {
+          return localStorage.getItem(reviewNoticeStorageKey()) === "1";
+        } catch (e) {
+          return false;
+        }
+      }
+      function dismissReviewNotice() {
+        try {
+          localStorage.setItem(reviewNoticeStorageKey(), "1");
+        } catch (e) {}
+        render();
+      }
       function subjectStats(subj) {
         const files = subjectAllFiles(subj);
         const total = files.length,
@@ -881,6 +931,34 @@
           }
         });
         return { total, done, remaining: total - done, pct: total ? Math.round((done / total) * 100) : 0 };
+      }
+      function overallStats() {
+        let allFiles = [];
+        state.subjects.forEach((s) => {
+          allFiles = allFiles.concat(subjectAllFiles(s));
+        });
+        const total = allFiles.length;
+        const done = allFiles.filter((f) => f.done).length;
+        const byCategory = {};
+        allFiles.forEach((f) => {
+          const cat = f.category || "بدون تصنيف";
+          if (!byCategory[cat]) byCategory[cat] = { total: 0, done: 0 };
+          byCategory[cat].total++;
+          if (f.done) byCategory[cat].done++;
+        });
+        const orderedNames = state.categories.map((c) => c.name).filter((n) => byCategory[n]);
+        const leftoverNames = Object.keys(byCategory).filter((n) => !orderedNames.includes(n));
+        const categories = [...orderedNames, ...leftoverNames].map((name) => {
+          const { total: catTotal, done: catDone } = byCategory[name];
+          return { name, total: catTotal, done: catDone, pct: catTotal ? Math.round((catDone / catTotal) * 100) : 0 };
+        });
+        return {
+          total,
+          done,
+          remaining: total - done,
+          pct: total ? Math.round((done / total) * 100) : 0,
+          categories,
+        };
       }
 
       /* ---------------- cascade cleanup ---------------- */
@@ -1020,7 +1098,7 @@
         return folderIconSVG(subj.color, size);
       }
       function categoryBadgeHTML(cat, subj) {
-        const catColor = CATEGORY_COLORS[cat] || "var(--accent)";
+        const catColor = getCategoryColor(cat);
         if (cat === "يوتيوب") {
           return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="play-circle" style="width:11px;height:11px;"></i> ${esc(cat)}</span>`;
         }
@@ -1036,7 +1114,7 @@
             return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;">${logo} ${esc(plat.name)}</span>`;
           }
         }
-        return `<span class="badge" style="background:${catColor}22; color:${catColor};">${esc(cat)}</span>`;
+        return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="tag" style="width:11px;height:11px;"></i> ${esc(cat)}</span>`;
       }
 
       // parentFolderId null => add at subject root. Otherwise adds as a subfolder inside that folder (تفرعات).
@@ -1495,6 +1573,7 @@
           tasks: state.tasks,
           history: state.history || [],
           platforms: state.platforms || [],
+          categories: state.categories || [],
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -1531,6 +1610,8 @@
             state.tasks = data.tasks || [];
             state.history = data.history || [];
             state.platforms = data.platforms || [];
+            state.categories =
+              data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c }));
             state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
             state.folderPath = [];
             state.view = "home";
@@ -1572,6 +1653,33 @@
         if (!confirm(`مسح ${doneTasks.length} مهمة مكتملة من اللستة؟ (السجل هيفضل محفوظ)`)) return;
         const doneIds = new Set(doneTasks.map((t) => t.id));
         state.tasks = state.tasks.filter((t) => !doneIds.has(t.id));
+        saveData();
+        render();
+      }
+
+      /* ---------------- categories (user-defined; drive the file "التصنيف" picker + overall progress breakdown) ---------------- */
+      function addCategory() {
+        const nameInput = document.getElementById("new-cat-name");
+        const colorInput = document.getElementById("new-cat-color");
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.focus();
+          return;
+        }
+        if (state.categories.some((c) => c.name === name)) {
+          nameInput.focus();
+          return;
+        }
+        state.categories.push({ id: uid(), name, color: colorInput.value });
+        nameInput.value = "";
+        saveData();
+        render();
+      }
+      function deleteCategory(id) {
+        const cat = state.categories.find((c) => c.id === id);
+        if (!cat) return;
+        if (!confirm(`حذف تصنيف "${cat.name}"؟ الملفات اللي متصنفة بيه هتفضل زي ما هي بس من غير لون مخصص.`)) return;
+        state.categories = state.categories.filter((c) => c.id !== id);
         saveData();
         render();
       }
@@ -1638,26 +1746,28 @@
       <div style="display:flex; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:4px;">
         <div class="tab-btn" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
         <div class="tab-btn" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
+        <div class="tab-btn" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" style="width:15px;height:15px;"></i> المراجعات المستحقة</div>
         <div class="tab-btn" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="mono" style="font-size:12px; color:var(--muted); background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:8px 12px; white-space:nowrap;">${esc(todayFormatted())}</div>
-        <button onclick="exportBackup()" title="تصدير نسخة احتياطية (تحميل ملف)" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
-          <i data-lucide="download" style="width:15px;height:15px;"></i>
-        </button>
-        <button onclick="triggerImportBackup()" title="استيراد نسخة احتياطية (رفع ملف)" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
-          <i data-lucide="upload" style="width:15px;height:15px;"></i>
-        </button>
-        <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="handleImportBackup(this)">
-        <div style="width:1px; height:20px; background:var(--border);"></div>
-        <div class="mono" style="font-size:11.5px; color:var(--muted); max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(state.user.email || "")}">${esc(state.user.email || "")}</div>
-        <button onclick="doLogout()" title="تسجيل الخروج" style="background:var(--surface-3); border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
-          <i data-lucide="log-out" style="width:15px;height:15px;"></i>
+        <button onclick="setView('settings')" title="الإعدادات" style="background:${state.view === "settings" ? "var(--accent-soft)" : "var(--surface-3)"}; border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:${state.view === "settings" ? "var(--accent)" : "var(--muted)"}; cursor:pointer; flex-shrink:0;">
+          <i data-lucide="settings" style="width:15px;height:15px;"></i>
         </button>
       </div>
     </div>
 
-    ${state.view === "home" ? renderHome() : state.view === "explorer" ? renderExplorer() : renderHistory()}
+    ${
+      state.view === "home"
+        ? renderHome()
+        : state.view === "explorer"
+          ? renderExplorer()
+          : state.view === "due-reviews"
+            ? renderDueReviewsSection()
+            : state.view === "settings"
+              ? renderSettingsView()
+              : renderHistory()
+    }
   </div>
 
   ${state.modal ? renderModal() : ""}
@@ -1829,8 +1939,111 @@ ${
     </div>`;
       }
 
+      function renderSettingsView() {
+        return `
+    <div style="display:flex; flex-direction:column; gap:20px; max-width:640px;">
+
+      <div class="dash-card" style="padding:18px;">
+        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">النسخة الاحتياطية</div>
+        <div style="color:var(--muted); font-size:12.5px; margin-bottom:14px;">حمّل نسخة من كل بياناتك (المواد، الملفات، المهام، السجل، المنصات، التصنيفات)، أو ارفع نسخة قديمة لاستعادتها.</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button onclick="exportBackup()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
+            <i data-lucide="download" style="width:15px;height:15px;"></i> تصدير نسخة احتياطية
+          </button>
+          <button onclick="triggerImportBackup()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
+            <i data-lucide="upload" style="width:15px;height:15px;"></i> استيراد نسخة احتياطية
+          </button>
+        </div>
+        <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="handleImportBackup(this)">
+      </div>
+
+      ${renderPlatformsSection()}
+
+      <div class="dash-card" style="padding:18px;">
+        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">بيانات الحساب</div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:12px; color:var(--muted); margin-bottom:3px;">الإيميل</div>
+            <div class="mono" style="font-size:13.5px; font-weight:600;">${esc(state.user.email || "")}</div>
+          </div>
+          <button onclick="doLogout()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
+            <i data-lucide="log-out" style="width:15px;height:15px;"></i> تسجيل الخروج
+          </button>
+        </div>
+      </div>
+
+      <div class="dash-card" style="padding:18px;">
+        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">تغيير كلمة السر</div>
+        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">كلمة السر الحالية</label>
+        <input id="pw-current" type="password" class="field-input" style="margin-bottom:14px;">
+        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">كلمة السر الجديدة</label>
+        <input id="pw-new" type="password" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="margin-bottom:14px;">
+        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تأكيد كلمة السر الجديدة</label>
+        <input id="pw-confirm" type="password" class="field-input" style="margin-bottom:14px;">
+        ${
+          state.settingsPwMsg
+            ? `<div style="font-size:12.5px; margin-bottom:12px; color:${state.settingsPwMsgType === "success" ? "var(--success)" : "#F2795B"};">${esc(state.settingsPwMsg)}</div>`
+            : ""
+        }
+        <button onclick="submitPasswordChange()" class="btn-primary" style="opacity:${state.settingsPwBusy ? 0.6 : 1};" ${state.settingsPwBusy ? "disabled" : ""}>
+          ${state.settingsPwBusy ? "جارِ الحفظ..." : "حفظ كلمة السر الجديدة"}
+        </button>
+      </div>
+
+    </div>`;
+      }
+      function passwordChangeErrorMessage(e) {
+        const code = (e && e.code) || "";
+        if (code.includes("wrong-password") || code.includes("invalid-credential")) return "كلمة السر الحالية غلط";
+        if (code.includes("weak-password")) return "كلمة السر الجديدة لازم تكون 6 حروف/أرقام على الأقل";
+        if (code.includes("requires-recent-login")) return "لازم تسجل خروج وتدخل تاني قبل ما تقدر تغيّر كلمة السر";
+        if (code.includes("network-request-failed")) return "مفيش اتصال بالإنترنت";
+        return "حصل خطأ، حاول تاني";
+      }
+      async function submitPasswordChange() {
+        const current = (document.getElementById("pw-current") || {}).value || "";
+        const next = (document.getElementById("pw-new") || {}).value || "";
+        const confirmPw = (document.getElementById("pw-confirm") || {}).value || "";
+        if (!current || !next || !confirmPw) {
+          state.settingsPwMsg = "من فضلك املأ كل الحقول";
+          state.settingsPwMsgType = "error";
+          render();
+          return;
+        }
+        if (next.length < 6) {
+          state.settingsPwMsg = "كلمة السر الجديدة لازم تكون 6 حروف/أرقام على الأقل";
+          state.settingsPwMsgType = "error";
+          render();
+          return;
+        }
+        if (next !== confirmPw) {
+          state.settingsPwMsg = "كلمة السر الجديدة والتأكيد مش متطابقين";
+          state.settingsPwMsgType = "error";
+          render();
+          return;
+        }
+        state.settingsPwBusy = true;
+        state.settingsPwMsg = "";
+        render();
+        try {
+          const cred = firebase.auth.EmailAuthProvider.credential(state.user.email, current);
+          await auth.currentUser.reauthenticateWithCredential(cred);
+          await auth.currentUser.updatePassword(next);
+          state.settingsPwMsg = "اتغيرت كلمة السر بنجاح";
+          state.settingsPwMsgType = "success";
+        } catch (e) {
+          state.settingsPwMsg = passwordChangeErrorMessage(e);
+          state.settingsPwMsgType = "error";
+        }
+        state.settingsPwBusy = false;
+        render();
+      }
+
       function renderHome() {
         const t = taskStats();
+        const o = overallStats();
+        const dueCount = getDueReviews().length;
+        const showReviewNotice = dueCount > 0 && !isReviewNoticeDismissed();
         const doneCount = state.tasks.reduce((n, tk) => {
           const { file } = resolveTask(tk);
           return n + (file && file.done ? 1 : 0);
@@ -1843,12 +2056,80 @@ ${
           return true;
         });
         return `
+    ${
+      showReviewNotice
+        ? `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--success-soft); border:1px solid var(--success); border-radius:12px; padding:10px 14px; margin-bottom:16px; cursor:pointer;" onclick="setView('due-reviews')">
+      <div style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--success); font-weight:600;">
+        <i data-lucide="bell" style="width:14px;height:14px;"></i>
+        عليك ${dueCount} ${dueCount === 1 ? "مراجعة مستحقة" : "مراجعات مستحقة"} النهاردة
+      </div>
+      <button onclick="event.stopPropagation(); dismissReviewNotice()" title="إخفاء لحد بكرة" style="background:none; border:none; color:var(--success); cursor:pointer; padding:4px; flex-shrink:0;">
+        <i data-lucide="x" style="width:14px;height:14px;"></i>
+      </button>
+    </div>`
+        : ""
+    }
+
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <div style="font-weight:800; font-size:15px;">التقدم الكلي في الدراسة</div>
+        <button onclick="openModal({type:'categories'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+          <i data-lucide="settings-2" style="width:13px;height:13px;"></i> إدارة التصنيفات
+        </button>
+      </div>
+      <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; margin-bottom:${o.categories.length ? "18px" : "0"};">
+        <div style="display:flex; align-items:center; gap:16px;">
+          ${ringHTML(o.pct, "var(--success)", 88, 9)}
+          <div>
+            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">نسبة إنجاز كل الملفات</div>
+            <div style="font-size:26px; font-weight:800;">${o.pct}%</div>
+          </div>
+        </div>
+        <div style="width:1px; align-self:stretch; background:var(--border);"></div>
+        <div style="display:flex; gap:22px; flex-wrap:wrap;">
+          <div><div style="color:var(--muted); font-size:12.5px;">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${o.done}</div></div>
+          <div><div style="color:var(--muted); font-size:12.5px;">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${o.remaining}</div></div>
+          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي الملفات</div><div class="mono" style="font-size:22px; font-weight:600;">${o.total}</div></div>
+        </div>
+      </div>
+      ${
+        o.categories.length
+          ? `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft);">
+        ${o.categories
+          .map((c) => {
+            const color = getCategoryColor(c.name);
+            return `
+          <div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                <span style="width:9px;height:9px;border-radius:50%;background:${color}; flex-shrink:0;"></span>
+                ${esc(c.name)}
+              </span>
+              <span class="mono" style="font-size:12px; color:var(--muted);">${c.done} من ${c.total}</span>
+            </div>
+            <div class="mini-bar"><div style="width:${c.pct}%; background:${color};"></div></div>
+          </div>`;
+          })
+          .join("")}
+      </div>`
+          : ""
+      }
+    </div>
+
+    <div class="dash-card" style="padding:20px; margin-bottom:20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <div style="font-weight:800; font-size:15px;">تقدم المهام الحالية</div>
+        <button onclick="openModal({type:'import'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+          <i data-lucide="plus" style="width:13px;height:13px;"></i> استيراد ملف كمهمة
+        </button>
+      </div>
       <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
         <div style="display:flex; align-items:center; gap:16px;">
           ${ringHTML(t.pct, "var(--accent)", 88, 9)}
           <div>
-            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">نسبة إنجاز المهام</div>
+            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">نسبة إنجاز المهام الحالية</div>
             <div style="font-size:26px; font-weight:800;">${t.pct}%</div>
           </div>
         </div>
@@ -1860,9 +2141,6 @@ ${
         </div>
       </div>
     </div>
-
-    ${renderDueReviewsSection()}
-    ${renderPlatformsSection()}
 
     <div class="dash-card" style="padding:18px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
@@ -2206,7 +2484,7 @@ ${
         return label;
       }
       function renderHistoryRow(h) {
-        const catColor = CATEGORY_COLORS[h.category] || "var(--accent)";
+        const catColor = getCategoryColor(h.category);
         return `
   <div class="file-row" style="display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid var(--border-soft); border-radius:11px;">
     <div style="width:22px; height:22px; border-radius:7px; background:var(--success); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
@@ -2237,6 +2515,7 @@ ${
         if (m.type === "file") return renderFileModal(m);
         if (m.type === "import") return renderImportModal();
         if (m.type === "move-file" || m.type === "move-folder") return renderMoveModal(m);
+        if (m.type === "categories") return renderCategoriesModal();
         if (m.type === "note") return renderNoteModal(m);
         if (m.type === "platform") return renderPlatformModal(m);
         if (m.type === "platform-edit") return renderPlatformModal(m);
@@ -2527,8 +2806,8 @@ ${
         const subj = getSubject(m.subjectId);
         const folder = getFolder(subj, m.folderId);
         const existing = m.fileId ? getFile(folder, m.fileId) : null;
-        const categories = Object.keys(CATEGORY_COLORS);
-        pickedCategory = existing ? existing.category : categories[0];
+        const categories = state.categories.map((c) => c.name);
+        pickedCategory = existing ? existing.category : categories[0] || null;
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px; max-height:88vh; overflow-y:auto;">
@@ -2538,8 +2817,17 @@ ${
       <input id="f-title" class="field-input" placeholder="مثال: الدرس الثالث - الطاقة الحركية" value="${existing ? esc(existing.title) : ""}" style="margin-bottom:16px;">
 
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">التصنيف</label>
-      <div id="cat-row" style="display:flex; gap:8px; margin-bottom:16px;">
-        ${categories.map((c) => `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}</div>`).join("")}
+      <div id="cat-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+        ${
+          categories.length
+            ? categories
+                .map(
+                  (c) =>
+                    `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}</div>`,
+                )
+                .join("")
+            : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي تصنيف — أضف واحد من كارت "التقدم الكلي" في الرئيسية</div>`
+        }
       </div>
 
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط المنصة / الدرس (اختياري)</label>
@@ -2563,6 +2851,41 @@ ${
         document
           .querySelectorAll("#cat-row .cat-pill")
           .forEach((el) => el.setAttribute("data-selected", el.getAttribute("data-cat") === c ? "true" : "false"));
+      }
+      function renderCategoriesModal() {
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:400px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">إدارة التصنيفات</div>
+      ${
+        state.categories.length
+          ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
+        ${state.categories
+          .map(
+            (c) => `
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
+            <span style="width:14px;height:14px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
+            <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(c.name)}</span>
+            <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
+              <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+            </button>
+          </div>`,
+          )
+          .join("")}
+      </div>`
+          : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي تصنيف</div>`
+      }
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تصنيف جديد</label>
+      <div style="display:flex; gap:8px; margin-bottom:20px;">
+        <input id="new-cat-name" class="field-input" placeholder="مثال: كويز، مذاكرة، ملخص..." style="flex:1;">
+        <input id="new-cat-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">تم</button>
+        <button class="btn-primary" onclick="addCategory()">إضافة</button>
+      </div>
+    </div>
+  </div>`;
       }
       function submitFile(subjectId, folderId, fileId) {
         const title = document.getElementById("f-title").value;
