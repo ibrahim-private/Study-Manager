@@ -571,13 +571,27 @@
     <script>
       /* ---------------- constants ---------------- */
       const DEFAULT_CATEGORIES = [
-        { id: "cat-platform", name: "منصة", color: "#5AA9E6" },
-        { id: "cat-youtube", name: "يوتيوب", color: "#EF4444" },
-        { id: "cat-hw", name: "واجب", color: "#F2795B" },
+        { id: "cat-platform", name: "منصة", color: "#5AA9E6", trackMistakes: false },
+        { id: "cat-youtube", name: "يوتيوب", color: "#EF4444", trackMistakes: false },
+        { id: "cat-hw", name: "واجب", color: "#F2795B", trackMistakes: true },
       ];
       function getCategoryColor(name) {
         const c = (state.categories || []).find((x) => x.name === name);
         return c ? c.color : "var(--accent)";
+      }
+      const DEFAULT_MISTAKE_TYPES = [
+        { id: "mt-rush", name: "تسرع", color: "#F2795B" },
+        { id: "mt-focus", name: "قلة تركيز", color: "#EF4444" },
+        { id: "mt-understand", name: "سوء فهم السؤال", color: "#5AA9E6" },
+        { id: "mt-forget", name: "نسيان المعلومة", color: "#B98BF0" },
+      ];
+      function getMistakeTypeColor(id) {
+        const t = (state.mistakeTypes || []).find((x) => x.id === id);
+        return t ? t.color : "var(--accent)";
+      }
+      function getMistakeTypeName(id) {
+        const t = (state.mistakeTypes || []).find((x) => x.id === id);
+        return t ? t.name : "بدون نوع";
       }
       const REVIEW_INTERVALS_DAYS = [1, 21, 30]; // بعد يوم، بعد 3 أسابيع، بعد شهر
       const REVIEW_STAGE_LABELS = ["مراجعة أولى", "مراجعة تانية", "مراجعة أخيرة"];
@@ -603,13 +617,15 @@
         tasks: [], // {id, subjectId, folderId, fileId}
         history: [], // {id, date:'YYYY-MM-DD', time:'HH:MM', fileId, title, category, subjectName, subjectColor, folderName}
         platforms: [], // {id, name, logoUrl}
-        view: "home", // 'home' | 'explorer' | 'due-reviews' | 'history' | 'settings'
+        view: "home", // 'home' | 'explorer' | 'due-reviews' | 'mistakes' | 'history' | 'settings'
         selectedSubjectId: null,
         folderPath: [], // array of folder ids, from subject root down to the currently open folder
         modal: null,
         loaded: false,
         taskFilter: "all", // 'all' | 'pending' | 'done'
-        categories: [], // {id, name, color} — user-defined file categories
+        categories: [], // {id, name, color, trackMistakes} — user-defined file categories
+        mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
+        mistakes: [], // {id, typeId, text, subjectId, folderId, fileId, createdAt}
         selectionMode: false, // explorer multi-select toggle
         selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
         clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
@@ -642,6 +658,8 @@
           history: [],
           platforms: [],
           categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
+          mistakeTypes: DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t })),
+          mistakes: [],
         };
       }
 
@@ -674,6 +692,11 @@
             state.platforms = data.platforms || [];
             state.categories =
               data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c }));
+            state.mistakeTypes =
+              data.mistakeTypes && data.mistakeTypes.length
+                ? data.mistakeTypes
+                : DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
+            state.mistakes = data.mistakes || [];
           } else {
             const seed = seedData();
             state.subjects = seed.subjects;
@@ -681,12 +704,16 @@
             state.history = seed.history || [];
             state.platforms = seed.platforms || [];
             state.categories = seed.categories;
+            state.mistakeTypes = seed.mistakeTypes;
+            state.mistakes = seed.mistakes;
             await docRef.set({
               subjects: state.subjects,
               tasks: state.tasks,
               history: state.history,
               platforms: state.platforms,
               categories: state.categories,
+              mistakeTypes: state.mistakeTypes,
+              mistakes: state.mistakes,
             });
           }
         } catch (e) {
@@ -696,6 +723,8 @@
           state.history = [];
           state.platforms = [];
           state.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }));
+          state.mistakeTypes = DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
+          state.mistakes = [];
         }
         state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
         state.folderPath = [];
@@ -711,6 +740,8 @@
           history: state.history,
           platforms: state.platforms,
           categories: state.categories,
+          mistakeTypes: state.mistakeTypes,
+          mistakes: state.mistakes,
         };
         clearTimeout(saveTimer);
         saveTimer = setTimeout(() => {
@@ -1717,6 +1748,8 @@
           history: state.history || [],
           platforms: state.platforms || [],
           categories: state.categories || [],
+          mistakeTypes: state.mistakeTypes || [],
+          mistakes: state.mistakes || [],
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
@@ -1755,6 +1788,11 @@
             state.platforms = data.platforms || [];
             state.categories =
               data.categories && data.categories.length ? data.categories : DEFAULT_CATEGORIES.map((c) => ({ ...c }));
+            state.mistakeTypes =
+              data.mistakeTypes && data.mistakeTypes.length
+                ? data.mistakeTypes
+                : DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
+            state.mistakes = data.mistakes || [];
             state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
             state.folderPath = [];
             state.view = "home";
@@ -1813,7 +1851,7 @@
           nameInput.focus();
           return;
         }
-        state.categories.push({ id: uid(), name, color: colorInput.value });
+        state.categories.push({ id: uid(), name, color: colorInput.value, trackMistakes: false });
         nameInput.value = "";
         saveData();
         render();
@@ -1823,6 +1861,13 @@
         if (!cat) return;
         if (!confirm(`حذف تصنيف "${cat.name}"؟ الملفات اللي متصنفة بيه هتفضل زي ما هي بس من غير لون مخصص.`)) return;
         state.categories = state.categories.filter((c) => c.id !== id);
+        saveData();
+        render();
+      }
+      function toggleCategoryMistakeTracking(id) {
+        const cat = state.categories.find((c) => c.id === id);
+        if (!cat) return;
+        cat.trackMistakes = !cat.trackMistakes;
         saveData();
         render();
       }
@@ -1902,11 +1947,12 @@
         <div style="width:1px; height:20px; background:var(--border);"></div>
         <div style="font-weight:800; font-size:17px;">مكتبة الدراسة</div>
       </div>
-      <div style="display:flex; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:4px;">
-        <div class="tab-btn" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
-        <div class="tab-btn" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
-        <div class="tab-btn" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" style="width:15px;height:15px;"></i> المراجعات المستحقة</div>
-        <div class="tab-btn" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
+      <div style="display:flex; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:4px; overflow-x:auto; max-width:100%;">
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" style="width:15px;height:15px;"></i> المراجعات المستحقة</div>
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "mistakes"}" onclick="setView('mistakes')"><i data-lucide="alert-triangle" style="width:15px;height:15px;"></i> الأخطاء</div>
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="mono" style="font-size:12px; color:var(--muted); background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:8px 12px; white-space:nowrap;">${esc(todayFormatted())}</div>
@@ -1923,9 +1969,11 @@
           ? renderExplorer()
           : state.view === "due-reviews"
             ? renderDueReviewsSection()
-            : state.view === "settings"
-              ? renderSettingsView()
-              : renderHistory()
+            : state.view === "mistakes"
+              ? renderMistakesView()
+              : state.view === "settings"
+                ? renderSettingsView()
+                : renderHistory()
     }
   </div>
 
@@ -2580,6 +2628,8 @@ ${
           (t) => t.fileId === f.id && t.folderId === folder.id && t.subjectId === subj.id,
         );
         const noteExists = hasNoteContent(f);
+        const cat = state.categories.find((c) => c.name === f.category);
+        const trackMistakes = !!(cat && cat.trackMistakes);
         return `
   <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
     ${
@@ -2600,6 +2650,7 @@ ${
         ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
         ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
         <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
+        ${trackMistakes ? `<span onclick="openModal({type:'mistake', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:var(--warning); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="alert-triangle" style="width:12px;height:12px;"></i> تسجيل غلطة</span>` : ""}
       </div>
       ${
         noteExists
@@ -2705,6 +2756,8 @@ ${
         if (m.type === "import") return renderImportModal();
         if (m.type === "move-file" || m.type === "move-folder" || m.type === "move-multi") return renderMoveModal(m);
         if (m.type === "categories") return renderCategoriesModal();
+        if (m.type === "mistake") return renderMistakeModal(m);
+        if (m.type === "mistake-types") return renderMistakeTypesModal();
         if (m.type === "note") return renderNoteModal(m);
         if (m.type === "platform") return renderPlatformModal(m);
         if (m.type === "platform-edit") return renderPlatformModal(m);
@@ -3044,17 +3097,21 @@ ${
       function renderCategoriesModal() {
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
-    <div class="modal-card dash-card" style="width:400px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">إدارة التصنيفات</div>
+    <div class="modal-card dash-card" style="width:420px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">إدارة التصنيفات</div>
+      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تتبع الأخطاء" لأي تصنيف عايز تسجل عليه أخطاء (زي كويز أو واجب) — هيظهرلك زرار "تسجيل غلطة" على أي ملف من التصنيف ده.</div>
       ${
         state.categories.length
           ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
         ${state.categories
           .map(
             (c) => `
-          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px; flex-wrap:wrap;">
             <span style="width:14px;height:14px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
-            <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(c.name)}</span>
+            <span style="flex:1; font-size:13.5px; font-weight:600; min-width:60px;">${esc(c.name)}</span>
+            <div class="cat-pill" data-selected="${!!c.trackMistakes}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryMistakeTracking('${c.id}')">
+              <i data-lucide="alert-triangle" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الأخطاء
+            </div>
             <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
               <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
             </button>
@@ -3076,6 +3133,292 @@ ${
     </div>
   </div>`;
       }
+
+      /* ---------------- mistakes / error journal ---------------- */
+      let pickedMistakeType = null;
+      let pickedMistakeSubject = null;
+      function pickMistakeType(id) {
+        pickedMistakeType = id;
+        document
+          .querySelectorAll("#mistake-type-row .cat-pill")
+          .forEach((el) => el.setAttribute("data-selected", el.getAttribute("data-type") === id ? "true" : "false"));
+      }
+      function pickMistakeSubject(id) {
+        pickedMistakeSubject = id;
+        document.querySelectorAll("#mistake-subject-row .cat-pill").forEach((el) => {
+          const v = el.getAttribute("data-subj") || null;
+          el.setAttribute("data-selected", v === id ? "true" : "false");
+        });
+      }
+      function renderMistakeModal(m) {
+        const subj = m.subjectId ? getSubject(m.subjectId) : null;
+        const folder = subj && m.folderId ? getFolder(subj, m.folderId) : null;
+        const file = folder && m.fileId ? getFile(folder, m.fileId) : null;
+        const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
+        const showSubjectPicker = !m.subjectId;
+        pickedMistakeType = state.mistakeTypes[0] ? state.mistakeTypes[0].id : null;
+        pickedMistakeSubject = m.subjectId || null;
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:420px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">تسجيل غلطة</div>
+      <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
+
+      ${
+        showSubjectPicker
+          ? `
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">المادة (اختياري)</label>
+      <div id="mistake-subject-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+        <div class="cat-pill" data-selected="true" data-subj="" onclick="pickMistakeSubject(null)">بدون مادة</div>
+        ${state.subjects.map((s) => `<div class="cat-pill" data-selected="false" data-subj="${s.id}" onclick="pickMistakeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
+      </div>`
+          : ""
+      }
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">نوع الغلط</label>
+      <div id="mistake-type-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+        ${
+          state.mistakeTypes.length
+            ? state.mistakeTypes
+                .map(
+                  (t) =>
+                    `<div class="cat-pill" data-selected="${pickedMistakeType === t.id}" data-type="${t.id}" onclick="pickMistakeType('${t.id}')">${esc(t.name)}</div>`,
+                )
+                .join("")
+            : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي نوع غلط — أضف واحد من صفحة "الأخطاء"</div>`
+        }
+      </div>
+
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">السؤال / ملاحظة (اختياري)</label>
+      <textarea id="mistake-text" class="field-input" rows="3" placeholder="اكتب نص السؤال أو أي تفاصيل عن الغلطة..." style="margin-bottom:20px; resize:vertical;"></textarea>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="submitMistake('${m.folderId || ""}','${m.fileId || ""}')">حفظ</button>
+      </div>
+    </div>
+  </div>`;
+      }
+      function submitMistake(folderId, fileId) {
+        if (!pickedMistakeType) {
+          alert("اختار نوع الغلط الأول (لو مفيش أنواع، ضيف واحد من صفحة الأخطاء)");
+          return;
+        }
+        const textEl = document.getElementById("mistake-text");
+        state.mistakes.push({
+          id: uid(),
+          typeId: pickedMistakeType,
+          text: textEl ? textEl.value.trim() : "",
+          subjectId: pickedMistakeSubject || null,
+          folderId: folderId || null,
+          fileId: fileId || null,
+          createdAt: new Date().toISOString(),
+        });
+        saveData();
+        closeModal();
+        render();
+      }
+      function deleteMistake(id) {
+        if (!confirm("حذف الغلطة دي من السجل؟")) return;
+        state.mistakes = state.mistakes.filter((mm) => mm.id !== id);
+        saveData();
+        render();
+      }
+      function renderMistakeTypesModal() {
+        return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:400px; padding:22px;">
+      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">إدارة أنواع الأخطاء</div>
+      ${
+        state.mistakeTypes.length
+          ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
+        ${state.mistakeTypes
+          .map(
+            (t) => `
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
+            <span style="width:14px;height:14px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
+            <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(t.name)}</span>
+            <button onclick="deleteMistakeType('${t.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
+              <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+            </button>
+          </div>`,
+          )
+          .join("")}
+      </div>`
+          : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي نوع غلط</div>`
+      }
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">نوع جديد</label>
+      <div style="display:flex; gap:8px; margin-bottom:20px;">
+        <input id="new-mtype-name" class="field-input" placeholder="مثال: تسرع، سوء فهم السؤال..." style="flex:1;">
+        <input id="new-mtype-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn-ghost" onclick="closeModal()">تم</button>
+        <button class="btn-primary" onclick="addMistakeType()">إضافة</button>
+      </div>
+    </div>
+  </div>`;
+      }
+      function addMistakeType() {
+        const nameInput = document.getElementById("new-mtype-name");
+        const colorInput = document.getElementById("new-mtype-color");
+        const name = nameInput.value.trim();
+        if (!name) {
+          nameInput.focus();
+          return;
+        }
+        if (state.mistakeTypes.some((t) => t.name === name)) {
+          nameInput.focus();
+          return;
+        }
+        state.mistakeTypes.push({ id: uid(), name, color: colorInput.value });
+        nameInput.value = "";
+        saveData();
+        render();
+      }
+      function deleteMistakeType(id) {
+        const t = state.mistakeTypes.find((x) => x.id === id);
+        if (!t) return;
+        if (!confirm(`حذف نوع "${t.name}"؟ الغلطات المسجلة بيه هتفضل موجودة بس من غير تصنيف واضح.`)) return;
+        state.mistakeTypes = state.mistakeTypes.filter((x) => x.id !== id);
+        saveData();
+        render();
+      }
+      function resolveMistakeLocation(m) {
+        if (!m.subjectId) return null;
+        const subj = getSubject(m.subjectId);
+        if (!subj) return null;
+        let folder = null,
+          file = null;
+        if (m.folderId) folder = getFolder(subj, m.folderId);
+        if (folder && m.fileId) file = getFile(folder, m.fileId);
+        return { subj, folder, file };
+      }
+      function mistakeStats() {
+        const total = state.mistakes.length;
+        const byType = {};
+        state.mistakes.forEach((m) => {
+          byType[m.typeId] = (byType[m.typeId] || 0) + 1;
+        });
+        const types = state.mistakeTypes
+          .map((t) => ({ id: t.id, name: t.name, color: t.color, count: byType[t.id] || 0 }))
+          .filter((t) => t.count > 0);
+        const bySubject = {};
+        state.mistakes.forEach((m) => {
+          const key = m.subjectId || "none";
+          if (!bySubject[key]) bySubject[key] = [];
+          bySubject[key].push(m);
+        });
+        return { total, types, bySubject };
+      }
+      function renderMistakeRow(m) {
+        const color = getMistakeTypeColor(m.typeId);
+        const typeName = getMistakeTypeName(m.typeId);
+        const loc = resolveMistakeLocation(m);
+        let dateStr = "";
+        try {
+          dateStr = new Date(m.createdAt).toLocaleDateString("ar-EG", { day: "numeric", month: "short" });
+        } catch (e) {}
+        return `
+    <div style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border-soft); border-radius:10px;">
+      <span class="badge" style="background:${color}22; color:${color}; flex-shrink:0; white-space:nowrap;">${esc(typeName)}</span>
+      <div style="flex:1; min-width:0;">
+        ${m.text ? `<div style="font-size:13px; margin-bottom:4px;">${esc(m.text)}</div>` : ""}
+        ${
+          loc && (loc.folder || loc.file)
+            ? `<div class="mono" style="font-size:11px; color:var(--faint);">${loc.folder ? esc(loc.folder.name) : ""}${loc.file ? " / " + esc(loc.file.title) : ""}</div>`
+            : ""
+        }
+        <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">${dateStr}</div>
+      </div>
+      <button onclick="deleteMistake('${m.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;flex-shrink:0;">
+        <i data-lucide="trash-2" style="width:13px;height:13px;"></i>
+      </button>
+    </div>`;
+      }
+      function renderMistakeSubjectGroup(key, mistakes) {
+        const subj = key === "none" ? null : getSubject(key);
+        return `
+    <div class="dash-card" style="padding:16px; margin-bottom:14px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <div style="font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;">
+          ${subj ? subjectIconHTML(subj, 16) : '<i data-lucide="help-circle" style="width:16px;height:16px;color:var(--faint);"></i>'}
+          ${subj ? esc(subj.name) : "بدون مادة"}
+        </div>
+        <span class="mono" style="font-size:12px; color:var(--muted);">${mistakes.length} غلطة</span>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${mistakes
+          .slice()
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+          .map(renderMistakeRow)
+          .join("")}
+      </div>
+    </div>`;
+      }
+      function renderMistakesView() {
+        const stats = mistakeStats();
+        return `
+    <div class="dash-card" style="padding:20px; margin-bottom:20px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <div style="font-weight:800; font-size:15px;">إحصائيات الأخطاء</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button onclick="openModal({type:'mistake-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+            <i data-lucide="settings-2" style="width:13px;height:13px;"></i> إدارة الأنواع
+          </button>
+          <button onclick="openModal({type:'mistake'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
+            <i data-lucide="plus" style="width:15px;height:15px;"></i> غلطة جديدة
+          </button>
+        </div>
+      </div>
+      ${
+        stats.total === 0
+          ? `<div style="text-align:center; color:var(--faint); padding:40px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+              <div style="font-size:13.5px;">لسه مفيش أخطاء متسجلة — سجل غلطة من هنا، أو من زرار "تسجيل غلطة" اللي بيظهر على ملفات التصنيفات اللي فعّلت عليها تتبع الأخطاء</div>
+            </div>`
+          : `
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:${stats.types.length ? "18px" : "0"};">
+        <div class="mono" style="font-size:32px; font-weight:800;">${stats.total}</div>
+        <div style="color:var(--muted); font-size:13px;">إجمالي الأخطاء المسجلة</div>
+      </div>
+      ${
+        stats.types.length
+          ? `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft);">
+        ${stats.types
+          .map((t) => {
+            const pct = stats.total ? Math.round((t.count / stats.total) * 100) : 0;
+            return `
+          <div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                <span style="width:9px;height:9px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
+                ${esc(t.name)}
+              </span>
+              <span class="mono" style="font-size:12px; color:var(--muted);">${t.count}</span>
+            </div>
+            <div class="mini-bar"><div style="width:${pct}%; background:${t.color};"></div></div>
+          </div>`;
+          })
+          .join("")}
+      </div>`
+          : ""
+      }
+      `
+      }
+    </div>
+
+    ${
+      stats.total > 0
+        ? Object.keys(stats.bySubject)
+            .sort((a, b) => stats.bySubject[b].length - stats.bySubject[a].length)
+            .map((key) => renderMistakeSubjectGroup(key, stats.bySubject[key]))
+            .join("")
+        : ""
+    }
+  `;
+      }
+
       function submitFile(subjectId, folderId, fileId) {
         const title = document.getElementById("f-title").value;
         if (!title.trim()) {
