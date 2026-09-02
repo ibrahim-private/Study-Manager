@@ -625,7 +625,9 @@
         taskFilter: "all", // 'all' | 'pending' | 'done'
         categories: [], // {id, name, color, trackMistakes} — user-defined file categories
         mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
-        mistakes: [], // {id, typeId, text, subjectId, folderId, fileId, createdAt}
+        mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
+        mistakesSubjectId: null, // drill-down: which subject is open in the "الأخطاء" tab (null = subject list)
+        mistakesFileKey: null, // drill-down: which per-file error group is open (null = file-group list)
         selectionMode: false, // explorer multi-select toggle
         selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
         clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
@@ -3135,13 +3137,16 @@ ${
       }
 
       /* ---------------- mistakes / error journal ---------------- */
-      let pickedMistakeType = null;
+      let pickedMistakeTypes = [];
       let pickedMistakeSubject = null;
-      function pickMistakeType(id) {
-        pickedMistakeType = id;
-        document
-          .querySelectorAll("#mistake-type-row .cat-pill")
-          .forEach((el) => el.setAttribute("data-selected", el.getAttribute("data-type") === id ? "true" : "false"));
+      function toggleMistakeType(id) {
+        const idx = pickedMistakeTypes.indexOf(id);
+        if (idx === -1) pickedMistakeTypes.push(id);
+        else pickedMistakeTypes.splice(idx, 1);
+        document.querySelectorAll("#mistake-type-row .cat-pill").forEach((el) => {
+          const v = el.getAttribute("data-type");
+          el.setAttribute("data-selected", pickedMistakeTypes.includes(v) ? "true" : "false");
+        });
       }
       function pickMistakeSubject(id) {
         pickedMistakeSubject = id;
@@ -3156,7 +3161,7 @@ ${
         const file = folder && m.fileId ? getFile(folder, m.fileId) : null;
         const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
         const showSubjectPicker = !m.subjectId;
-        pickedMistakeType = state.mistakeTypes[0] ? state.mistakeTypes[0].id : null;
+        pickedMistakeTypes = [];
         pickedMistakeSubject = m.subjectId || null;
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
@@ -3175,14 +3180,14 @@ ${
           : ""
       }
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">نوع الغلط</label>
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">نوع الغلط <span style="color:var(--faint); font-weight:500;">(اختار أكتر من واحد لو حابب)</span></label>
       <div id="mistake-type-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
         ${
           state.mistakeTypes.length
             ? state.mistakeTypes
                 .map(
                   (t) =>
-                    `<div class="cat-pill" data-selected="${pickedMistakeType === t.id}" data-type="${t.id}" onclick="pickMistakeType('${t.id}')">${esc(t.name)}</div>`,
+                    `<div class="cat-pill" data-selected="${pickedMistakeTypes.includes(t.id)}" data-type="${t.id}" onclick="toggleMistakeType('${t.id}')">${esc(t.name)}</div>`,
                 )
                 .join("")
             : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي نوع غلط — أضف واحد من صفحة "الأخطاء"</div>`
@@ -3200,14 +3205,14 @@ ${
   </div>`;
       }
       function submitMistake(folderId, fileId) {
-        if (!pickedMistakeType) {
-          alert("اختار نوع الغلط الأول (لو مفيش أنواع، ضيف واحد من صفحة الأخطاء)");
+        if (!pickedMistakeTypes.length) {
+          alert("اختار نوع غلط واحد على الأقل (لو مفيش أنواع، ضيف واحد من صفحة الأخطاء)");
           return;
         }
         const textEl = document.getElementById("mistake-text");
         state.mistakes.push({
           id: uid(),
-          typeId: pickedMistakeType,
+          typeIds: pickedMistakeTypes.slice(),
           text: textEl ? textEl.value.trim() : "",
           subjectId: pickedMistakeSubject || null,
           folderId: folderId || null,
@@ -3294,11 +3299,18 @@ ${
         if (folder && m.fileId) file = getFile(folder, m.fileId);
         return { subj, folder, file };
       }
+      function mistakeTypeIdsOf(m) {
+        if (Array.isArray(m.typeIds) && m.typeIds.length) return m.typeIds;
+        if (m.typeId) return [m.typeId];
+        return [];
+      }
       function mistakeStats() {
         const total = state.mistakes.length;
         const byType = {};
         state.mistakes.forEach((m) => {
-          byType[m.typeId] = (byType[m.typeId] || 0) + 1;
+          mistakeTypeIdsOf(m).forEach((tid) => {
+            byType[tid] = (byType[tid] || 0) + 1;
+          });
         });
         const types = state.mistakeTypes
           .map((t) => ({ id: t.id, name: t.name, color: t.color, count: byType[t.id] || 0 }))
@@ -3311,9 +3323,46 @@ ${
         });
         return { total, types, bySubject };
       }
+      function mistakeFileGroups(mistakes) {
+        const groups = {};
+        mistakes.forEach((m) => {
+          const key = m.fileId ? `file:${m.fileId}` : "general";
+          if (!groups[key])
+            groups[key] = {
+              key,
+              subjectId: m.subjectId || null,
+              folderId: m.folderId || null,
+              fileId: m.fileId || null,
+              items: [],
+            };
+          groups[key].items.push(m);
+        });
+        return groups;
+      }
+      function mistakeFileGroupLabel(g) {
+        if (!g.fileId) return { title: "أخطاء عامة (بدون ملف)", sub: "" };
+        const subj = g.subjectId ? getSubject(g.subjectId) : null;
+        const folder = subj && g.folderId ? getFolder(subj, g.folderId) : null;
+        const file = folder ? getFile(folder, g.fileId) : null;
+        return { title: file ? file.title : "ملف محذوف", sub: folder ? folder.name : "" };
+      }
+      function openMistakesSubject(subjectId) {
+        state.mistakesSubjectId = subjectId;
+        state.mistakesFileKey = null;
+        render();
+      }
+      function openMistakesFileGroup(key) {
+        state.mistakesFileKey = key;
+        render();
+      }
       function renderMistakeRow(m) {
-        const color = getMistakeTypeColor(m.typeId);
-        const typeName = getMistakeTypeName(m.typeId);
+        const ids = mistakeTypeIdsOf(m);
+        const badges = ids
+          .map((id) => {
+            const color = getMistakeTypeColor(id);
+            return `<span class="badge" style="background:${color}22; color:${color}; white-space:nowrap;">${esc(getMistakeTypeName(id))}</span>`;
+          })
+          .join("");
         const loc = resolveMistakeLocation(m);
         let dateStr = "";
         try {
@@ -3321,7 +3370,7 @@ ${
         } catch (e) {}
         return `
     <div style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border-soft); border-radius:10px;">
-      <span class="badge" style="background:${color}22; color:${color}; flex-shrink:0; white-space:nowrap;">${esc(typeName)}</span>
+      <div style="display:flex; flex-wrap:wrap; gap:4px; flex-shrink:0; max-width:120px;">${badges || '<span class="badge" style="background:var(--surface-3); color:var(--faint);">بدون نوع</span>'}</div>
       <div style="flex:1; min-width:0;">
         ${m.text ? `<div style="font-size:13px; margin-bottom:4px;">${esc(m.text)}</div>` : ""}
         ${
@@ -3336,28 +3385,7 @@ ${
       </button>
     </div>`;
       }
-      function renderMistakeSubjectGroup(key, mistakes) {
-        const subj = key === "none" ? null : getSubject(key);
-        return `
-    <div class="dash-card" style="padding:16px; margin-bottom:14px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-        <div style="font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;">
-          ${subj ? subjectIconHTML(subj, 16) : '<i data-lucide="help-circle" style="width:16px;height:16px;color:var(--faint);"></i>'}
-          ${subj ? esc(subj.name) : "بدون مادة"}
-        </div>
-        <span class="mono" style="font-size:12px; color:var(--muted);">${mistakes.length} غلطة</span>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${mistakes
-          .slice()
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .map(renderMistakeRow)
-          .join("")}
-      </div>
-    </div>`;
-      }
-      function renderMistakesView() {
-        const stats = mistakeStats();
+      function renderMistakesStatsCard(stats) {
         return `
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
@@ -3406,17 +3434,82 @@ ${
       }
       `
       }
-    </div>
+    </div>`;
+      }
+      function renderMistakesSubjectList(stats) {
+        const keys = Object.keys(stats.bySubject);
+        if (!keys.length) return "";
+        const sorted = keys.sort((a, b) => stats.bySubject[b].length - stats.bySubject[a].length);
+        return `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px;">
+      ${sorted
+        .map((key) => {
+          const subj = key === "none" ? null : getSubject(key);
+          const count = stats.bySubject[key].length;
+          return `
+        <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer;" onclick="openMistakesSubject('${key}')">
+          ${subj ? subjectIconHTML(subj, 28) : '<i data-lucide="help-circle" style="width:28px;height:28px;color:var(--faint);"></i>'}
+          <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${subj ? esc(subj.name) : "بدون مادة"}</div>
+          <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${count} غلطة</div>
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+      }
+      function renderMistakesFileGroups(mistakes) {
+        const groups = mistakeFileGroups(mistakes);
+        const keys = Object.keys(groups).sort((a, b) => groups[b].items.length - groups[a].items.length);
+        return `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px;">
+      ${keys
+        .map((key) => {
+          const g = groups[key];
+          const { title, sub } = mistakeFileGroupLabel(g);
+          return `
+        <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer;" onclick="openMistakesFileGroup('${key}')">
+          ${folderIconSVG("var(--warning)", 30)}
+          <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(title)}</div>
+          <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${g.items.length} غلطة${sub ? " · " + esc(sub) : ""}</div>
+        </div>`;
+        })
+        .join("")}
+    </div>`;
+      }
+      function renderMistakesView() {
+        const stats = mistakeStats();
+        const statsCard = renderMistakesStatsCard(stats);
+        if (stats.total === 0) return statsCard;
 
-    ${
-      stats.total > 0
-        ? Object.keys(stats.bySubject)
-            .sort((a, b) => stats.bySubject[b].length - stats.bySubject[a].length)
-            .map((key) => renderMistakeSubjectGroup(key, stats.bySubject[key]))
-            .join("")
-        : ""
-    }
-  `;
+        if (!state.mistakesSubjectId) {
+          return statsCard + renderMistakesSubjectList(stats);
+        }
+
+        const subjectMistakes = stats.bySubject[state.mistakesSubjectId] || [];
+        const subj = state.mistakesSubjectId === "none" ? null : getSubject(state.mistakesSubjectId);
+        const subjLabel = state.mistakesSubjectId === "none" ? "بدون مادة" : subj ? subj.name : "";
+
+        let breadcrumb = `
+    <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-bottom:14px; flex-wrap:wrap;">
+      <span style="cursor:pointer; color:var(--accent); font-weight:600;" onclick="openMistakesSubject(null)">كل المواد</span>
+      <i data-lucide="chevron-left" style="width:12px;height:12px;"></i>
+      <span style="${state.mistakesFileKey ? "cursor:pointer; color:var(--accent); font-weight:600;" : "font-weight:700;"}" ${state.mistakesFileKey ? `onclick="openMistakesFileGroup(null)"` : ""}>${esc(subjLabel)}</span>`;
+
+        if (!state.mistakesFileKey) {
+          breadcrumb += `</div>`;
+          return statsCard + breadcrumb + renderMistakesFileGroups(subjectMistakes);
+        }
+
+        const groups = mistakeFileGroups(subjectMistakes);
+        const g = groups[state.mistakesFileKey];
+        const { title: fileLabel } = g ? mistakeFileGroupLabel(g) : { title: "" };
+        breadcrumb += `<i data-lucide="chevron-left" style="width:12px;height:12px;"></i><span style="font-weight:700;">${esc(fileLabel)}</span></div>`;
+
+        const groupMistakes = g ? g.items.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
+        return (
+          statsCard +
+          breadcrumb +
+          `<div style="display:flex; flex-direction:column; gap:8px;">${groupMistakes.map(renderMistakeRow).join("")}</div>`
+        );
       }
 
       function submitFile(subjectId, folderId, fileId) {
