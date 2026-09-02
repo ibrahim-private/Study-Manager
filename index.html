@@ -133,6 +133,23 @@
         background: var(--success);
         border-color: var(--success);
       }
+      .sel-check {
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        border: 1.8px solid var(--faint);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+        cursor: pointer;
+        background: var(--surface);
+      }
+      .sel-check[data-checked="true"] {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
       .badge {
         font-size: 11.5px;
         padding: 3px 9px;
@@ -593,6 +610,9 @@
         loaded: false,
         taskFilter: "all", // 'all' | 'pending' | 'done'
         categories: [], // {id, name, color} — user-defined file categories
+        selectionMode: false, // explorer multi-select toggle
+        selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
+        clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
         settingsPwBusy: false,
         settingsPwMsg: "",
         settingsPwMsgType: "error", // 'error' | 'success' — filters the "المهام" list on the home screen
@@ -1165,17 +1185,16 @@
         });
         return ids;
       }
-      function moveFile(subjectId, folderId, fileId, targetSubjectId, targetFolderId) {
+      // Silent core movers — no saveData/closeModal/render/navigation, just the data change.
+      // Return true on success (including a harmless no-op move to the same place), false when skipped (invalid target).
+      function moveFileToLocation(subjectId, folderId, fileId, targetSubjectId, targetFolderId) {
         const subj = getSubject(subjectId);
         const folder = getFolder(subj, folderId);
         const file = getFile(folder, fileId);
         const targetSubj = getSubject(targetSubjectId);
         const targetFolder = targetSubj ? getFolder(targetSubj, targetFolderId) : null;
-        if (!file || !targetFolder) return;
-        if (targetFolder === folder) {
-          closeModal();
-          return;
-        }
+        if (!file || !targetFolder) return false;
+        if (targetFolder === folder) return true;
         folder.files = folder.files.filter((f) => f.id !== fileId);
         if (!targetFolder.files) targetFolder.files = [];
         targetFolder.files.push(file);
@@ -1185,28 +1204,21 @@
             t.folderId = targetFolderId;
           }
         });
-        state.selectedSubjectId = targetSubjectId;
-        state.folderPath = findFolderPathIds(targetSubj.folders, targetFolderId, []) || [];
-        saveData();
-        closeModal();
-        render();
+        return true;
       }
-      function moveFolder(subjectId, folderId, targetSubjectId, targetParentFolderId) {
+      function moveFolderToLocation(subjectId, folderId, targetSubjectId, targetParentFolderId) {
         const subj = getSubject(subjectId);
         const folder = getFolder(subj, folderId);
-        if (!folder) return;
+        if (!folder) return false;
         const excluded = collectDescendantFolderIds(folder);
-        if (targetParentFolderId && excluded.includes(targetParentFolderId)) return;
+        if (targetParentFolderId && excluded.includes(targetParentFolderId)) return false;
         const container = findFolderContainer(subj, folderId);
-        if (!container) return;
+        if (!container) return false;
         const targetSubj = getSubject(targetSubjectId);
-        if (!targetSubj) return;
+        if (!targetSubj) return false;
         const targetContainer = targetParentFolderId ? getFolder(targetSubj, targetParentFolderId) : targetSubj;
-        if (!targetContainer) return;
-        if (targetContainer === container) {
-          closeModal();
-          return;
-        }
+        if (!targetContainer) return false;
+        if (targetContainer === container) return true;
         container.folders = container.folders.filter((f) => f.id !== folderId);
         if (!targetContainer.folders) targetContainer.folders = [];
         targetContainer.folders.push(folder);
@@ -1216,11 +1228,142 @@
             if (t.subjectId === subjectId && fileIds.has(t.fileId)) t.subjectId = targetSubjectId;
           });
         }
+        return true;
+      }
+      // Wrappers used by the per-row move buttons (single item, via the move-file/move-folder modal).
+      function moveFile(subjectId, folderId, fileId, targetSubjectId, targetFolderId) {
+        const ok = moveFileToLocation(subjectId, folderId, fileId, targetSubjectId, targetFolderId);
+        if (!ok) {
+          closeModal();
+          return;
+        }
+        const targetSubj = getSubject(targetSubjectId);
+        state.selectedSubjectId = targetSubjectId;
+        state.folderPath = findFolderPathIds(targetSubj.folders, targetFolderId, []) || [];
+        saveData();
+        closeModal();
+        render();
+      }
+      function moveFolder(subjectId, folderId, targetSubjectId, targetParentFolderId) {
+        const ok = moveFolderToLocation(subjectId, folderId, targetSubjectId, targetParentFolderId);
+        if (!ok) {
+          closeModal();
+          return;
+        }
+        const targetSubj = getSubject(targetSubjectId);
         state.selectedSubjectId = targetSubjectId;
         state.folderPath = findFolderPathIds(targetSubj.folders, folderId, []) || [];
         saveData();
         closeModal();
         render();
+      }
+      // Batch mover for multi-select "نقل المحدد" (move-multi modal).
+      function moveSelectedTo(targetSubjectId, targetFolderId) {
+        const items = state.selectedItems || [];
+        let successCount = 0,
+          skipCount = 0;
+        items.forEach((it) => {
+          const ok =
+            it.type === "file"
+              ? moveFileToLocation(it.subjectId, it.folderId, it.fileId, targetSubjectId, targetFolderId)
+              : moveFolderToLocation(it.subjectId, it.folderId, targetSubjectId, targetFolderId);
+          ok ? successCount++ : skipCount++;
+        });
+        saveData();
+        state.selectedItems = [];
+        state.selectionMode = false;
+        const targetSubj = getSubject(targetSubjectId);
+        state.selectedSubjectId = targetSubjectId;
+        state.folderPath = targetFolderId ? findFolderPathIds(targetSubj.folders, targetFolderId, []) || [] : [];
+        closeModal();
+        render();
+        if (skipCount > 0) {
+          setTimeout(
+            () =>
+              alert(`اتنقل ${successCount} عنصر. ${skipCount} اتجاهلوا (مينفعش تنقل فولدر جوه نفسه أو جوه فرع منه).`),
+            50,
+          );
+        }
+      }
+
+      /* ---------------- multi-select + cut/paste ---------------- */
+      function toggleSelectionMode() {
+        state.selectionMode = !state.selectionMode;
+        if (!state.selectionMode) state.selectedItems = [];
+        render();
+      }
+      function isSelected(type, subjectId, folderId, fileId) {
+        return state.selectedItems.some(
+          (it) =>
+            it.type === type &&
+            it.subjectId === subjectId &&
+            it.folderId === folderId &&
+            (type === "file" ? it.fileId === fileId : true),
+        );
+      }
+      function toggleSelectItem(type, subjectId, folderId, fileId) {
+        const idx = state.selectedItems.findIndex(
+          (it) =>
+            it.type === type &&
+            it.subjectId === subjectId &&
+            it.folderId === folderId &&
+            (type === "file" ? it.fileId === fileId : true),
+        );
+        if (idx === -1)
+          state.selectedItems.push(
+            type === "file" ? { type, subjectId, folderId, fileId } : { type, subjectId, folderId },
+          );
+        else state.selectedItems.splice(idx, 1);
+        render();
+      }
+      function clearSelection() {
+        state.selectedItems = [];
+        state.selectionMode = false;
+        render();
+      }
+      function openMoveSelected() {
+        if (!state.selectedItems.length) return;
+        openModal({ type: "move-multi", items: state.selectedItems.slice() });
+      }
+      function cutSelection() {
+        if (!state.selectedItems.length) return;
+        state.clipboard = state.selectedItems.slice();
+        state.selectedItems = [];
+        state.selectionMode = false;
+        render();
+      }
+      function cancelClipboard() {
+        state.clipboard = null;
+        render();
+      }
+      function pasteClipboard() {
+        if (!state.clipboard || !state.clipboard.length) return;
+        const targetSubjectId = state.selectedSubjectId;
+        const targetFolderId = state.folderPath.length ? state.folderPath[state.folderPath.length - 1] : null;
+        const hasFiles = state.clipboard.some((it) => it.type === "file");
+        if (!targetFolderId && hasFiles) {
+          alert("الملفات لازم تتحط جوه فولدر — افتح فولدر الأول وبعدين الصق");
+          return;
+        }
+        let successCount = 0,
+          skipCount = 0;
+        state.clipboard.forEach((it) => {
+          const ok =
+            it.type === "file"
+              ? moveFileToLocation(it.subjectId, it.folderId, it.fileId, targetSubjectId, targetFolderId)
+              : moveFolderToLocation(it.subjectId, it.folderId, targetSubjectId, targetFolderId);
+          ok ? successCount++ : skipCount++;
+        });
+        saveData();
+        state.clipboard = null;
+        render();
+        if (skipCount > 0) {
+          setTimeout(
+            () =>
+              alert(`اتلصق ${successCount} عنصر. ${skipCount} اتجاهلوا (مينفعش تنقل فولدر جوه نفسه أو جوه فرع منه).`),
+            50,
+          );
+        }
       }
 
       function saveFile(subjectId, folderId, fileId, data) {
@@ -1711,6 +1854,22 @@
       function folderIconSVG(color, size = 16) {
         return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" style="flex-shrink:0;"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>`;
       }
+      function renderSelectionBar() {
+        const count = state.selectedItems.length;
+        return `
+  <div style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:40; background:var(--surface); border:1px solid var(--border-soft); border-radius:14px; box-shadow:0 8px 30px rgba(0,0,0,0.35); padding:10px 14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center;">
+    <span class="mono" style="font-size:12.5px; color:var(--muted); white-space:nowrap;">${count} ${count === 1 ? "عنصر محدد" : "عناصر محددة"}</span>
+    <button onclick="openMoveSelected()" class="btn-primary" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
+      <i data-lucide="move" style="width:14px;height:14px;"></i> نقل
+    </button>
+    <button onclick="cutSelection()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
+      <i data-lucide="scissors" style="width:14px;height:14px;"></i> قص
+    </button>
+    <button onclick="clearSelection()" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:8px; font-size:12.5px;">
+      إلغاء
+    </button>
+  </div>`;
+      }
 
       /* ---------------- main render ---------------- */
       function render() {
@@ -1770,7 +1929,8 @@
     }
   </div>
 
-  ${state.modal ? renderModal() : ""}
+    ${state.modal ? renderModal() : ""}
+    ${state.view === "explorer" && state.selectedItems.length > 0 ? renderSelectionBar() : ""}
   `;
         if (window.lucide) lucide.createIcons();
         if (state.modal) focusModalInput();
@@ -2319,7 +2479,23 @@ ${
           }</div>
         </div>
       </div>
-      <div style="display:flex; gap:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${
+          state.clipboard && state.clipboard.length
+            ? `
+        <div style="display:flex; align-items:center; gap:2px; background:var(--accent-soft); border-radius:10px; padding-left:4px;">
+          <button onclick="pasteClipboard()" style="display:flex; align-items:center; gap:6px; background:none; border:none; color:var(--accent); cursor:pointer; padding:8px 10px; font-size:13px; font-weight:600;">
+            <i data-lucide="clipboard-paste" style="width:15px;height:15px;"></i> لصق (${state.clipboard.length})
+          </button>
+          <button onclick="cancelClipboard()" title="إلغاء القص" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:6px;">
+            <i data-lucide="x" style="width:13px;height:13px;"></i>
+          </button>
+        </div>`
+            : ""
+        }
+        <button onclick="toggleSelectionMode()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
+          <i data-lucide="${state.selectionMode ? "x" : "check-square"}" style="width:15px;height:15px;"></i> ${state.selectionMode ? "إلغاء التحديد" : "تحديد"}
+        </button>
         <button onclick='openModal({type:"folder", subjectId:"${subj.id}", parentFolderId:${folder ? `"${folder.id}"` : null}})' class="btn-primary" style="display:flex; align-items:center; gap:6px;">
           <i data-lucide="folder-plus" style="width:15px;height:15px;"></i> فولدر جديد
         </button>
@@ -2355,8 +2531,13 @@ ${
             const done = files.filter((x) => x.done).length;
             const subCount = (f.folders || []).length;
             return `
-          <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="openFolder('${f.id}')">
-            <div class="hover-actions" style="position:absolute; top:6px; left:6px; display:flex; gap:2px;">
+          <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="${state.selectionMode ? `toggleSelectItem('folder','${subj.id}','${f.id}')` : `openFolder('${f.id}')`}">
+            ${
+              state.selectionMode
+                ? `<div class="sel-check" data-checked="${isSelected("folder", subj.id, f.id)}" style="position:absolute; top:6px; right:6px; z-index:2;">
+                  ${isSelected("folder", subj.id, f.id) ? '<i data-lucide="check" style="width:12px;height:12px;color:#06110B;"></i>' : ""}
+                </div>`
+                : `<div class="hover-actions" style="position:absolute; top:6px; left:6px; display:flex; gap:2px;">
               <button onclick="event.stopPropagation(); openModal({type:'folder', subjectId:'${subj.id}', parentFolderId:${folder ? `'${folder.id}'` : "null"}, folderId:'${f.id}'})" title="إعادة تسمية" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
                 <i data-lucide="pencil" style="width:13px;height:13px;"></i>
               </button>
@@ -2366,7 +2547,8 @@ ${
               <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
                 <i data-lucide="x" style="width:13px;height:13px;"></i>
               </button>
-            </div>
+            </div>`
+            }
             ${folderIconSVG(subj.color, 30)}
             <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.name)}</div>
             <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${done}/${files.length} ملف${subCount ? " · " + subCount + " فولدر فرعي" : ""}</div>
@@ -2400,6 +2582,13 @@ ${
         const noteExists = hasNoteContent(f);
         return `
   <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
+    ${
+      state.selectionMode
+        ? `<div class="sel-check" data-checked="${isSelected("file", subj.id, folder.id, f.id)}" onclick="toggleSelectItem('file','${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
+      ${isSelected("file", subj.id, folder.id, f.id) ? '<i data-lucide="check" style="width:12px;height:12px;color:#06110B;"></i>' : ""}
+    </div>`
+        : ""
+    }
     <div class="check-btn" data-done="${f.done}" onclick="toggleFile('${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
       ${f.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ""}
     </div>
@@ -2514,7 +2703,7 @@ ${
         if (m.type === "folder") return renderFolderModal(m);
         if (m.type === "file") return renderFileModal(m);
         if (m.type === "import") return renderImportModal();
-        if (m.type === "move-file" || m.type === "move-folder") return renderMoveModal(m);
+        if (m.type === "move-file" || m.type === "move-folder" || m.type === "move-multi") return renderMoveModal(m);
         if (m.type === "categories") return renderCategoriesModal();
         if (m.type === "note") return renderNoteModal(m);
         if (m.type === "platform") return renderPlatformModal(m);
@@ -2967,19 +3156,41 @@ ${
       /* ---------------- move modal (works for both files and folders — shows every subject
          then its folder tree; clicking a valid destination moves the item there immediately) ---------------- */
       function renderMoveModal(m) {
+        const isMulti = m.type === "move-multi";
         const isFolder = m.type === "move-folder";
-        const subj = getSubject(m.subjectId);
-        if (!subj) return "";
-        const sourceFolder = getFolder(subj, m.folderId);
-        if (!sourceFolder) return "";
-        const itemLabel = isFolder ? sourceFolder.name : (getFile(sourceFolder, m.fileId) || {}).title || "";
-        if (!isFolder && !getFile(sourceFolder, m.fileId)) return "";
-        const excludeFolderIds = isFolder ? collectDescendantFolderIds(sourceFolder) : [];
-        const container = isFolder ? findFolderContainer(subj, m.folderId) : null;
-        const currentContainerId = isFolder ? (container === subj ? null : container.id) : m.folderId;
+        let itemLabel = "";
+        let excludeFolderIds = [];
+        let currentContainerId = null;
+        let hasFiles = false;
+
+        if (isMulti) {
+          const items = m.items || [];
+          if (!items.length) return "";
+          hasFiles = items.some((it) => it.type === "file");
+          items
+            .filter((it) => it.type === "folder")
+            .forEach((it) => {
+              const s = getSubject(it.subjectId);
+              const f = s ? getFolder(s, it.folderId) : null;
+              if (f) excludeFolderIds = excludeFolderIds.concat(collectDescendantFolderIds(f));
+            });
+          itemLabel = `${items.length} عنصر محدد`;
+        } else {
+          const subj = getSubject(m.subjectId);
+          if (!subj) return "";
+          const sourceFolder = getFolder(subj, m.folderId);
+          if (!sourceFolder) return "";
+          itemLabel = isFolder ? sourceFolder.name : (getFile(sourceFolder, m.fileId) || {}).title || "";
+          if (!isFolder && !getFile(sourceFolder, m.fileId)) return "";
+          hasFiles = !isFolder;
+          excludeFolderIds = isFolder ? collectDescendantFolderIds(sourceFolder) : [];
+          const container = isFolder ? findFolderContainer(subj, m.folderId) : null;
+          currentContainerId = isFolder ? (container === subj ? null : container.id) : m.folderId;
+        }
 
         function moveCall(targetSubjectId, targetFolderId) {
           const tf = targetFolderId ? `'${targetFolderId}'` : "null";
+          if (isMulti) return `moveSelectedTo('${targetSubjectId}',${tf})`;
           return isFolder
             ? `moveFolder('${m.subjectId}','${m.folderId}','${targetSubjectId}',${tf})`
             : `moveFile('${m.subjectId}','${m.folderId}','${m.fileId}','${targetSubjectId}',${tf})`;
@@ -2989,7 +3200,7 @@ ${
           return (folders || [])
             .map((f) => {
               if (excludeFolderIds.includes(f.id)) return "";
-              const isCurrent = subjParam.id === m.subjectId && f.id === currentContainerId;
+              const isCurrent = !isMulti && subjParam.id === m.subjectId && f.id === currentContainerId;
               return `
         <div class="import-row" style="padding-right:${10 + depth * 16}px; cursor:${isCurrent ? "default" : "pointer"}; opacity:${isCurrent ? 0.5 : 1};" ${isCurrent ? "" : `onclick="${moveCall(subjParam.id, f.id)}"`}>
           <span style="display:flex; align-items:center; gap:7px; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
@@ -3005,24 +3216,25 @@ ${
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:440px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${isFolder ? "نقل الفولدر" : "نقل الملف"}</div>
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${isMulti ? "نقل العناصر المحددة" : isFolder ? "نقل الفولدر" : "نقل الملف"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(itemLabel)}</div>
       <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px;">
         ${state.subjects
           .map((s) => {
-            const rootIsCurrent = isFolder && s.id === m.subjectId && currentContainerId === null;
-            const rootClickable = isFolder && !rootIsCurrent;
+            const rootIsCurrent = !isMulti && isFolder && s.id === m.subjectId && currentContainerId === null;
+            const rootClickable = isMulti ? !hasFiles : isFolder && !rootIsCurrent;
             return `
         <div style="margin-bottom:10px;">
           <div class="import-row" style="font-weight:700; font-size:13.5px; color:${s.color}; cursor:${rootClickable ? "pointer" : "default"}; opacity:${rootIsCurrent ? 0.5 : 1};" ${rootClickable ? `onclick="${moveCall(s.id, null)}"` : ""}>
             <span style="display:flex; align-items:center; gap:7px;">${subjectIconHTML(s, 15)} ${esc(s.name)}</span>
-            ${isFolder ? `<span style="font-size:10.5px; color:var(--faint); flex-shrink:0;">${rootIsCurrent ? "هنا حاليًا" : "جذر المادة"}</span>` : ""}
+            ${isFolder || isMulti ? `<span style="font-size:10.5px; color:var(--faint); flex-shrink:0;">${rootIsCurrent ? "هنا حاليًا" : "جذر المادة"}</span>` : ""}
           </div>
           ${renderTree(s, s.folders, 1)}
         </div>`;
           })
           .join("")}
       </div>
+      ${isMulti && hasFiles ? `<div style="font-size:11.5px; color:var(--faint); margin-top:10px;">الملفات المحددة مينفعش تتحط على جذر المادة مباشرة — اختار فولدر</div>` : ""}
       <div style="display:flex; justify-content:flex-end; margin-top:14px;">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
       </div>
