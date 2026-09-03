@@ -571,9 +571,9 @@
     <script>
       /* ---------------- constants ---------------- */
       const DEFAULT_CATEGORIES = [
-        { id: "cat-platform", name: "منصة", color: "#5AA9E6", trackMistakes: false },
-        { id: "cat-youtube", name: "يوتيوب", color: "#EF4444", trackMistakes: false },
-        { id: "cat-hw", name: "واجب", color: "#F2795B", trackMistakes: true },
+        { id: "cat-platform", name: "منصة", color: "#5AA9E6", trackMistakes: false, countsInOverall: true },
+        { id: "cat-youtube", name: "يوتيوب", color: "#EF4444", trackMistakes: false, countsInOverall: true },
+        { id: "cat-hw", name: "واجب", color: "#F2795B", trackMistakes: true, countsInOverall: true },
       ];
       function getCategoryColor(name) {
         const c = (state.categories || []).find((x) => x.name === name);
@@ -968,7 +968,10 @@
         render();
       }
       function subjectStats(subj) {
-        const files = subjectAllFiles(subj);
+        const excludedCategoryNames = new Set(
+          state.categories.filter((c) => c.countsInOverall === false).map((c) => c.name),
+        );
+        const files = subjectAllFiles(subj).filter((f) => !(f.category && excludedCategoryNames.has(f.category)));
         const total = files.length,
           done = files.filter((f) => f.done).length;
         return { total, done, pct: total ? Math.round((done / total) * 100) : 0 };
@@ -990,10 +993,14 @@
         state.subjects.forEach((s) => {
           allFiles = allFiles.concat(subjectAllFiles(s));
         });
-        const total = allFiles.length;
-        const done = allFiles.filter((f) => f.done).length;
+        const excludedCategoryNames = new Set(
+          state.categories.filter((c) => c.countsInOverall === false).map((c) => c.name),
+        );
+        const countedFiles = allFiles.filter((f) => !(f.category && excludedCategoryNames.has(f.category)));
+        const total = countedFiles.length;
+        const done = countedFiles.filter((f) => f.done).length;
         const byCategory = {};
-        allFiles.forEach((f) => {
+        countedFiles.forEach((f) => {
           const cat = f.category || "بدون تصنيف";
           if (!byCategory[cat]) byCategory[cat] = { total: 0, done: 0 };
           byCategory[cat].total++;
@@ -1011,7 +1018,13 @@
           remaining: total - done,
           pct: total ? Math.round((done / total) * 100) : 0,
           categories,
+          excludedCategoryCount: excludedCategoryNames.size,
         };
+      }
+      function excludedCategoriesLabel(n) {
+        if (n === 1) return "فيه قسم واحد مستبعد من حساب التقدم الكلي";
+        if (n === 2) return "فيه قسمين مستبعدين من حساب التقدم الكلي";
+        return `فيه ${n} أقسام مستبعدة من حساب التقدم الكلي`;
       }
 
       /* ---------------- cascade cleanup ---------------- */
@@ -1853,7 +1866,13 @@
           nameInput.focus();
           return;
         }
-        state.categories.push({ id: uid(), name, color: colorInput.value, trackMistakes: false });
+        state.categories.push({
+          id: uid(),
+          name,
+          color: colorInput.value,
+          trackMistakes: false,
+          countsInOverall: true,
+        });
         nameInput.value = "";
         saveData();
         render();
@@ -1870,6 +1889,13 @@
         const cat = state.categories.find((c) => c.id === id);
         if (!cat) return;
         cat.trackMistakes = !cat.trackMistakes;
+        saveData();
+        render();
+      }
+      function toggleCategoryCountsInOverall(id) {
+        const cat = state.categories.find((c) => c.id === id);
+        if (!cat) return;
+        cat.countsInOverall = cat.countsInOverall === false ? true : false;
         saveData();
         render();
       }
@@ -2326,6 +2352,13 @@ ${
       </div>`
           : ""
       }
+      ${
+        o.excludedCategoryCount > 0
+          ? `<div onclick="openModal({type:'categories'})" style="cursor:pointer; opacity:0.55; font-size:11px; color:var(--muted); margin-top:12px; display:flex; align-items:center; gap:5px;">
+              <i data-lucide="eye-off" style="width:11px;height:11px;"></i> ${excludedCategoriesLabel(o.excludedCategoryCount)}
+            </div>`
+          : ""
+      }
     </div>
 
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
@@ -2632,6 +2665,7 @@ ${
         const noteExists = hasNoteContent(f);
         const cat = state.categories.find((c) => c.name === f.category);
         const trackMistakes = !!(cat && cat.trackMistakes);
+        const excludedFromOverall = !!(cat && cat.countsInOverall === false);
         return `
   <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
     ${
@@ -2648,6 +2682,7 @@ ${
       <div style="font-weight:600; font-size:14px; ${f.done ? "text-decoration:line-through; text-decoration-color:var(--faint);" : ""} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(f.category, subj)}
+        ${excludedFromOverall ? `<span title="التصنيف ده مستبعد من حساب التقدم الكلي" style="font-size:10.5px; color:var(--faint); opacity:0.7; display:flex; align-items:center; gap:3px;"><i data-lucide="eye-off" style="width:10px;height:10px;"></i> غير محسوب في التقدم</span>` : ""}
         ${f.link ? `<a href="${esc(f.link)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="link-2" style="width:12px;height:12px;"></i> رابط الدرس</a>` : ""}
         ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
         ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
@@ -3101,7 +3136,7 @@ ${
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px;">
       <div style="font-weight:800; font-size:16px; margin-bottom:4px;">إدارة التصنيفات</div>
-      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تتبع الأخطاء" لأي تصنيف عايز تسجل عليه أخطاء (زي كويز أو واجب) — هيظهرلك زرار "تسجيل غلطة" على أي ملف من التصنيف ده.</div>
+      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تتبع الأخطاء" لأي تصنيف عايز تسجل عليه أخطاء (زي كويز أو واجب). و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي.</div>
       ${
         state.categories.length
           ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
@@ -3113,6 +3148,9 @@ ${
             <span style="flex:1; font-size:13.5px; font-weight:600; min-width:60px;">${esc(c.name)}</span>
             <div class="cat-pill" data-selected="${!!c.trackMistakes}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryMistakeTracking('${c.id}')">
               <i data-lucide="alert-triangle" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الأخطاء
+            </div>
+            <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryCountsInOverall('${c.id}')">
+              <i data-lucide="pie-chart" style="width:11px;height:11px; vertical-align:-2px;"></i> يحسب في التقدم الكلي
             </div>
             <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
               <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
