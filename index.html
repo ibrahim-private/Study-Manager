@@ -3750,6 +3750,20 @@ ${
 
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && state.modal) closeModal();
+        // Enter inside a single-line <input> in an open modal triggers that modal's
+        // primary (save/add) button — matches normal dialog-box UX. Textareas and the
+        // rich-text note editor (both non-<input>) are excluded on purpose so Enter still
+        // inserts a new line there instead of submitting.
+        if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "color") {
+          const card = e.target.closest(".modal-card");
+          if (card) {
+            const btn = card.querySelector(".btn-primary");
+            if (btn) {
+              e.preventDefault();
+              btn.click();
+            }
+          }
+        }
       });
 
       render();
