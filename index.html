@@ -1745,10 +1745,37 @@
         cleanNode(div);
         return div.innerHTML;
       }
+      /* ---------------- note drafts (sessionStorage) — survive an accidental modal close,
+         cleared on explicit Cancel or a real Save ---------------- */
+      let noteDraftTimer = null;
+      function noteDraftKey(subjectId, folderId, fileId) {
+        const uidPart = state.user ? state.user.uid : "anon";
+        return `study-note-draft-${uidPart}-${subjectId}-${folderId}-${fileId}`;
+      }
+      function scheduleNoteDraftSave(subjectId, folderId, fileId) {
+        clearTimeout(noteDraftTimer);
+        noteDraftTimer = setTimeout(() => {
+          const el = document.getElementById("note-editor");
+          if (!el) return;
+          try {
+            sessionStorage.setItem(noteDraftKey(subjectId, folderId, fileId), el.innerHTML);
+          } catch (e) {}
+        }, 500);
+      }
+      function clearNoteDraft(subjectId, folderId, fileId) {
+        try {
+          sessionStorage.removeItem(noteDraftKey(subjectId, folderId, fileId));
+        } catch (e) {}
+      }
+      function cancelNoteEdit(subjectId, folderId, fileId) {
+        clearNoteDraft(subjectId, folderId, fileId);
+        closeModal();
+      }
       function submitNote(subjectId, folderId, fileId) {
         const editor = document.getElementById("note-editor");
         const html = editor ? editor.innerHTML : "";
         saveNoteRich(subjectId, folderId, fileId, html);
+        clearNoteDraft(subjectId, folderId, fileId);
         closeModal();
       }
 
@@ -2935,7 +2962,12 @@ ${
         const file = getFile(folder, m.fileId);
         if (!file) return "";
         const noteExists = hasNoteContent(file);
-        const initialContent = file.noteHtml || (file.note ? `<p>${esc(file.note)}</p>` : "");
+        let draftContent = null;
+        try {
+          draftContent = sessionStorage.getItem(noteDraftKey(m.subjectId, m.folderId, m.fileId));
+        } catch (e) {}
+        const initialContent =
+          draftContent !== null ? draftContent : file.noteHtml || (file.note ? `<p>${esc(file.note)}</p>` : "");
         return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:540px; padding:22px; max-height:88vh; display:flex; flex-direction:column;">
@@ -3001,12 +3033,12 @@ ${
           .join("")}
       </div>
 
-      <div id="note-editor" class="note-editor" contenteditable="true" dir="auto" data-placeholder="اكتب ملاحظتك هنا... تقدر تلصق صورة أو تنسخ معادلة/كسر من مكان تاني وتعمله لصق (Ctrl+V)" onpaste="handleNotePaste(event)">${initialContent}</div>
+      <div id="note-editor" class="note-editor" contenteditable="true" dir="auto" data-placeholder="اكتب ملاحظتك هنا... تقدر تلصق صورة أو تنسخ معادلة/كسر من مكان تاني وتعمله لصق (Ctrl+V)" onpaste="handleNotePaste(event)" oninput="scheduleNoteDraftSave('${m.subjectId}','${m.folderId}','${m.fileId}')">${initialContent}</div>
       <input type="file" id="note-image-input" accept="image/*" style="display:none" onchange="handleNoteImageUpload(this)">
       <div style="color:var(--faint); font-size:11px; margin-top:6px;">الصور بتتضغط تلقائيًا قبل الحفظ عشان توفر مساحة</div>
 
       <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
-        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-ghost" onclick="cancelNoteEdit('${m.subjectId}','${m.folderId}','${m.fileId}')">إلغاء</button>
         <button class="btn-primary" onclick="submitNote('${m.subjectId}','${m.folderId}','${m.fileId}')">حفظ</button>
       </div>
     </div>
