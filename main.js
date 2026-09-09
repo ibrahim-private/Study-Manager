@@ -84,7 +84,7 @@ let state = {
   mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
   mistakesSubjectId: null, // drill-down: which subject is open in the "الأخطاء" tab (null = subject list)
   mistakesFileKey: null, // drill-down: which per-file error group is open (null = file-group list)
-  grades: [], // {id, typeId, title, totalQuestions, correctCount, difficulty:{easy:{total,correct},medium:{...},hard:{...}}, subjectId, folderId, fileId, createdAt}
+  grades: [], // {id, typeId, title, totalQuestions, correctCount, breakdown:[{label,total,correct}], subjectId, folderId, fileId, createdAt} — old records may still carry legacy difficulty:{easy:{total,correct},...}
   gradeTypes: [], // {id, name, color} — user-defined grade/exam types (quiz, homework, exam...)
   gradesExpanded: false, // home dashboard "معدل الدرجات" card — details expand toggle
   gradesOpenSubjectId: null, // drill-down within the expanded grades card (null = subject list)
@@ -1854,6 +1854,8 @@ function renderHome() {
       }
     </div>
 
+    ${renderGradesCard()}
+
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
         <div style="font-weight:800; font-size:15px;">تقدم المهام الحالية</div>
@@ -1877,8 +1879,6 @@ function renderHome() {
         </div>
       </div>
     </div>
-
-    ${renderGradesCard()}
 
     <div class="dash-card" style="padding:18px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
@@ -2640,28 +2640,30 @@ function pickCategory(c) {
 function renderCategoriesModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
-    <div class="modal-card dash-card" style="width:420px; padding:22px;">
+    <div class="modal-card dash-card" style="width:720px; max-width:95vw; padding:22px; max-height:88vh; display:flex; flex-direction:column;">
       <div style="font-weight:800; font-size:16px; margin-bottom:4px;">إدارة التصنيفات</div>
       <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تتبع الأخطاء" لأي تصنيف عايز تسجل عليه أخطاء (زي كويز أو واجب). و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي. و"تتبع الدرجات" لأي تصنيف فيه اختبارات عايز تسجل نتيجتها (كويز/واجب/امتحان).</div>
       ${
         state.categories.length
-          ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
+          ? `<div style="overflow-y:auto; flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; margin:-4px -4px 18px; padding:4px;">
         ${state.categories
           .map(
             (c) => `
-          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--border-soft); border-radius:10px;">
             <span style="width:14px;height:14px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
-            <span style="flex:1; font-size:13.5px; font-weight:600; min-width:60px;">${esc(c.name)}</span>
-            <div class="cat-pill" data-selected="${!!c.trackMistakes}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryMistakeTracking('${c.id}')">
-              <i data-lucide="alert-triangle" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الأخطاء
+            <span style="width:110px; flex-shrink:0; font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(c.name)}">${esc(c.name)}</span>
+            <div style="display:flex; gap:8px; flex:1; min-width:0;">
+              <div class="cat-pill" data-selected="${!!c.trackMistakes}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryMistakeTracking('${c.id}')">
+                <i data-lucide="alert-triangle" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الأخطاء
+              </div>
+              <div class="cat-pill" data-selected="${!!c.trackGrades}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryTrackGrades('${c.id}')">
+                <i data-lucide="clipboard-check" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الدرجات
+              </div>
+              <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryCountsInOverall('${c.id}')">
+                <i data-lucide="pie-chart" style="width:11px;height:11px; vertical-align:-2px;"></i> يحسب في التقدم الكلي
+              </div>
             </div>
-            <div class="cat-pill" data-selected="${!!c.trackGrades}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryTrackGrades('${c.id}')">
-              <i data-lucide="clipboard-check" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الدرجات
-            </div>
-            <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:0 0 auto;" onclick="toggleCategoryCountsInOverall('${c.id}')">
-              <i data-lucide="pie-chart" style="width:11px;height:11px; vertical-align:-2px;"></i> يحسب في التقدم الكلي
-            </div>
-            <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
+            <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px; flex-shrink:0;">
               <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
             </button>
           </div>`,
@@ -2670,14 +2672,16 @@ function renderCategoriesModal() {
       </div>`
           : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي تصنيف</div>`
       }
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تصنيف جديد</label>
-      <div style="display:flex; gap:8px; margin-bottom:20px;">
-        <input id="new-cat-name" class="field-input" placeholder="مثال: كويز، مذاكرة، ملخص..." style="flex:1;">
-        <input id="new-cat-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
-      </div>
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
-        <button class="btn-ghost" onclick="closeModal()">تم</button>
-        <button class="btn-primary" onclick="addCategory()">إضافة</button>
+      <div style="flex-shrink:0;">
+        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تصنيف جديد</label>
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <input id="new-cat-name" class="field-input" placeholder="مثال: كويز، مذاكرة، ملخص..." style="flex:1;">
+          <input id="new-cat-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+        </div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn-ghost" onclick="closeModal()">تم</button>
+          <button class="btn-primary" onclick="addCategory()">إضافة</button>
+        </div>
       </div>
     </div>
   </div>`;
@@ -3086,6 +3090,7 @@ function renderGradeModal(m) {
   const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
   pickedGradeType = state.gradeTypes[0] ? state.gradeTypes[0].id : null;
   pickedGradeSubject = m.subjectId || null;
+  gradeBreakdownRowSeq = 0;
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:88vh; overflow-y:auto;">
@@ -3119,32 +3124,22 @@ function renderGradeModal(m) {
         }
       </div>
 
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
         <div>
           <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">إجمالي الأسئلة</label>
           <input id="grade-total" type="number" min="0" class="field-input" placeholder="مثال: 20">
         </div>
         <div>
-          <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">عدد الصح</label>
-          <input id="grade-correct" type="number" min="0" class="field-input" placeholder="مثال: 16">
+          <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">عدد الغلط</label>
+          <input id="grade-wrong" type="number" min="0" class="field-input" placeholder="مثال: 4">
         </div>
       </div>
+      <div style="font-size:11px; color:var(--faint); margin-bottom:18px;">هنحسب عدد الصح تلقائي من الفرق بينهم.</div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">توزيع الصعوبة <span style="color:var(--faint); font-weight:500;">(اختياري)</span></label>
-      <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;">
-        ${["easy", "medium", "hard"]
-          .map((k) => {
-            const label = k === "easy" ? "سهل" : k === "medium" ? "متوسط" : "صعب";
-            return `
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:12.5px; width:44px; flex-shrink:0; color:var(--muted);">${label}</span>
-          <input id="grade-diff-${k}-total" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" style="flex:1;">
-          <input id="grade-diff-${k}-correct" type="number" min="0" class="field-input" placeholder="عدد الصح" style="flex:1;">
-        </div>`;
-          })
-          .join("")}
-      </div>
-      <div style="font-size:11px; color:var(--faint); margin-bottom:20px;">مجموع أعداد الأسئلة هنا لازم يكون قريب من إجمالي الأسئلة فوق (مش إجباري).</div>
+      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">تفاصيل إضافية <span style="color:var(--faint); font-weight:500;">(اختياري — زي الصعوبة أو نوع الأسئلة)</span></label>
+      <div id="grade-breakdown-rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;"></div>
+      <button type="button" class="btn-ghost" onclick="addGradeBreakdownRow()" style="font-size:12.5px; padding:7px 14px; margin-bottom:8px;">+ إضافة تفصيل</button>
+      <div style="font-size:11px; color:var(--faint); margin-bottom:20px;">اكتب اسم أي تقسيمة عايزها (سهل، متوسط، اختيار من متعدد...) وعدد أسئلتها وعدد الغلط فيها بس — هنحسب الصح تلقائي.</div>
 
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
@@ -3152,6 +3147,26 @@ function renderGradeModal(m) {
       </div>
     </div>
   </div>`;
+}
+let gradeBreakdownRowSeq = 0;
+function gradeBreakdownRowHTML(idx) {
+  return `
+  <div class="grade-bd-row" data-bd-idx="${idx}" style="display:flex; gap:8px; align-items:center;">
+    <input id="grade-bd-label-${idx}" class="field-input" placeholder="مثال: سهل" style="flex:1.3; min-width:0;">
+    <input id="grade-bd-total-${idx}" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" style="flex:1; min-width:0;">
+    <input id="grade-bd-wrong-${idx}" type="number" min="0" class="field-input" placeholder="عدد الغلط" style="flex:1; min-width:0;">
+    <button type="button" onclick="removeGradeBreakdownRow(${idx})" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px; flex-shrink:0; font-size:17px; line-height:1;">×</button>
+  </div>`;
+}
+function addGradeBreakdownRow() {
+  gradeBreakdownRowSeq += 1;
+  const container = document.getElementById("grade-breakdown-rows");
+  if (!container) return;
+  container.insertAdjacentHTML("beforeend", gradeBreakdownRowHTML(gradeBreakdownRowSeq));
+}
+function removeGradeBreakdownRow(idx) {
+  const row = document.querySelector(`.grade-bd-row[data-bd-idx="${idx}"]`);
+  if (row) row.remove();
 }
 function submitGrade(subjectId, folderId, fileId) {
   if (!pickedGradeType) {
@@ -3176,20 +3191,24 @@ function submitGrade(subjectId, folderId, fileId) {
     }
   }
   const totalQuestions = parseInt((document.getElementById("grade-total") || {}).value, 10) || 0;
-  const correctCount = parseInt((document.getElementById("grade-correct") || {}).value, 10) || 0;
+  const wrongCount = parseInt((document.getElementById("grade-wrong") || {}).value, 10) || 0;
   if (!totalQuestions) {
     alert("اكتب إجمالي عدد الأسئلة");
     return;
   }
-  if (correctCount > totalQuestions) {
-    alert("عدد الصح مينفعش يكون أكبر من إجمالي الأسئلة");
+  if (wrongCount > totalQuestions) {
+    alert("عدد الغلط مينفعش يكون أكبر من إجمالي الأسئلة");
     return;
   }
-  const difficulty = {};
-  ["easy", "medium", "hard"].forEach((k) => {
-    const total = parseInt((document.getElementById(`grade-diff-${k}-total`) || {}).value, 10) || 0;
-    const correct = parseInt((document.getElementById(`grade-diff-${k}-correct`) || {}).value, 10) || 0;
-    if (total > 0) difficulty[k] = { total, correct: Math.min(correct, total) };
+  const correctCount = totalQuestions - wrongCount;
+  const breakdown = [];
+  document.querySelectorAll("#grade-breakdown-rows .grade-bd-row").forEach((row) => {
+    const idx = row.getAttribute("data-bd-idx");
+    const labelEl = document.getElementById(`grade-bd-label-${idx}`);
+    const label = labelEl && labelEl.value.trim() ? labelEl.value.trim() : "بدون اسم";
+    const total = parseInt((document.getElementById(`grade-bd-total-${idx}`) || {}).value, 10) || 0;
+    const wrong = parseInt((document.getElementById(`grade-bd-wrong-${idx}`) || {}).value, 10) || 0;
+    if (total > 0) breakdown.push({ label, total, correct: Math.max(0, total - Math.min(wrong, total)) });
   });
   state.grades.push({
     id: uid(),
@@ -3197,7 +3216,7 @@ function submitGrade(subjectId, folderId, fileId) {
     title,
     totalQuestions,
     correctCount,
-    difficulty,
+    breakdown,
     subjectId: finalSubjectId,
     folderId: fileId ? folderId || null : null,
     fileId: fileId || null,
@@ -3324,14 +3343,21 @@ function openGradesSubject(key) {
   state.gradesOpenSubjectId = key;
   render();
 }
+function gradeBreakdownParts(g) {
+  if (Array.isArray(g.breakdown)) return g.breakdown.filter((b) => b && b.total > 0);
+  if (g.difficulty) {
+    const diffLabel = { easy: "سهل", medium: "متوسط", hard: "صعب" };
+    return Object.keys(g.difficulty)
+      .filter((k) => g.difficulty[k] && g.difficulty[k].total > 0)
+      .map((k) => ({ label: diffLabel[k] || k, total: g.difficulty[k].total, correct: g.difficulty[k].correct }));
+  }
+  return [];
+}
 function renderGradeRow(g) {
   const color = getGradeTypeColor(g.typeId);
   const typeName = getGradeTypeName(g.typeId);
   const pct = gradeItemPct(g);
-  const diffLabel = { easy: "سهل", medium: "متوسط", hard: "صعب" };
-  const diffParts = ["easy", "medium", "hard"].filter(
-    (k) => g.difficulty && g.difficulty[k] && g.difficulty[k].total > 0,
-  );
+  const diffParts = gradeBreakdownParts(g);
   let dateStr = "";
   try {
     dateStr = new Date(g.createdAt).toLocaleDateString("ar-EG", { day: "numeric", month: "short" });
@@ -3349,10 +3375,10 @@ function renderGradeRow(g) {
         diffParts.length
           ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
               ${diffParts
-                .map((k) => {
-                  const d = g.difficulty[k];
-                  return `<span class="mono" style="font-size:11px; color:var(--faint);">${diffLabel[k]}: ${d.correct}/${d.total}</span>`;
-                })
+                .map(
+                  (d) =>
+                    `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(d.label)}: ${d.correct}/${d.total}</span>`,
+                )
                 .join("")}
             </div>`
           : ""
