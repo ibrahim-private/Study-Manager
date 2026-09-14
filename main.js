@@ -1,26 +1,24 @@
 /* ---------------- constants ---------------- */
 const DEFAULT_CATEGORIES = [
-  {
-    id: "cat-platform",
-    name: "منصة",
-    color: "#5AA9E6",
-    trackMistakes: false,
-    countsInOverall: true,
-    trackGrades: false,
-  },
-  {
-    id: "cat-youtube",
-    name: "يوتيوب",
-    color: "#EF4444",
-    trackMistakes: false,
-    countsInOverall: true,
-    trackGrades: false,
-  },
-  { id: "cat-hw", name: "واجب", color: "#F2795B", trackMistakes: true, countsInOverall: true, trackGrades: true },
+  { id: "cat-platform", name: "منصة", color: "#5AA9E6", isTest: false, countsInOverall: true },
+  { id: "cat-youtube", name: "يوتيوب", color: "#EF4444", isTest: false, countsInOverall: true },
+  { id: "cat-hw", name: "واجب", color: "#F2795B", isTest: true, countsInOverall: true },
 ];
 function getCategoryColor(name) {
   const c = (state.categories || []).find((x) => x.name === name);
   return c ? c.color : "var(--accent)";
+}
+// isTest replaces the old separate trackMistakes/trackGrades flags — a category marked as
+// "اختبار" automatically gets both grade + mistake tracking together in "قسم الاختبارات".
+// Falls back to the old flags for accounts saved before this change.
+function categoryIsTest(cat) {
+  if (!cat) return false;
+  if (cat.isTest !== undefined) return !!cat.isTest;
+  return !!(cat.trackMistakes || cat.trackGrades);
+}
+function isTestFile(f) {
+  const cat = state.categories.find((c) => c.name === f.category);
+  return categoryIsTest(cat);
 }
 const DEFAULT_MISTAKE_TYPES = [
   { id: "mt-rush", name: "تسرع", color: "#F2795B" },
@@ -73,21 +71,21 @@ let state = {
   tasks: [], // {id, subjectId, folderId, fileId}
   history: [], // {id, date:'YYYY-MM-DD', time:'HH:MM', fileId, title, category, subjectName, subjectColor, folderName}
   platforms: [], // {id, name, logoUrl}
-  view: "home", // 'home' | 'explorer' | 'due-reviews' | 'mistakes' | 'history' | 'settings'
+  view: "home", // 'home' | 'explorer' | 'due-reviews' | 'tests' | 'history' | 'settings'
   selectedSubjectId: null,
   folderPath: [], // array of folder ids, from subject root down to the currently open folder
   modal: null,
   loaded: false,
   taskFilter: "all", // 'all' | 'pending' | 'done'
-  categories: [], // {id, name, color, trackMistakes} — user-defined file categories
+  categories: [], // {id, name, color, isTest, countsInOverall} — user-defined file categories
   mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
   mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
-  mistakesSubjectId: null, // drill-down: which subject is open in the "الأخطاء" tab (null = subject list)
-  mistakesFileKey: null, // drill-down: which per-file error group is open (null = file-group list)
-  grades: [], // {id, typeId, title, totalQuestions, correctCount, breakdown:[{label,total,correct}], subjectId, folderId, fileId, createdAt} — old records may still carry legacy difficulty:{easy:{total,correct},...}
+  grades: [], // {id, typeId, title, totalQuestions, correctCount, breakdown:[{label,total,correct}], subjectId, folderId, fileId, createdAt} — one per file max, edited in place afterwards
   gradeTypes: [], // {id, name, color} — user-defined grade/exam types (quiz, homework, exam...)
-  gradesExpanded: false, // home dashboard "معدل الدرجات" card — details expand toggle
-  gradesOpenSubjectId: null, // drill-down within the expanded grades card (null = subject list)
+  // --- قسم الاختبارات (tests section) — mirrors the real file/folder tree, filtered to isTest files ---
+  testsSubjectId: null, // which subject's tests page is open (null = subjects overview)
+  testsCollapsedFolders: {}, // folderId -> true when the user has collapsed that section of the tree (default: expanded)
+  testsOpenFileKey: null, // key of the file row whose grade/mistakes dropdown is expanded
   selectionMode: false, // explorer multi-select toggle
   selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
   clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
@@ -1355,9 +1353,8 @@ function addCategory() {
     id: uid(),
     name,
     color: colorInput.value,
-    trackMistakes: false,
+    isTest: false,
     countsInOverall: true,
-    trackGrades: false,
   });
   nameInput.value = "";
   saveData();
@@ -1371,10 +1368,10 @@ function deleteCategory(id) {
   saveData();
   render();
 }
-function toggleCategoryMistakeTracking(id) {
+function toggleCategoryIsTest(id) {
   const cat = state.categories.find((c) => c.id === id);
   if (!cat) return;
-  cat.trackMistakes = !cat.trackMistakes;
+  cat.isTest = !categoryIsTest(cat);
   saveData();
   render();
 }
@@ -1382,13 +1379,6 @@ function toggleCategoryCountsInOverall(id) {
   const cat = state.categories.find((c) => c.id === id);
   if (!cat) return;
   cat.countsInOverall = cat.countsInOverall === false ? true : false;
-  saveData();
-  render();
-}
-function toggleCategoryTrackGrades(id) {
-  const cat = state.categories.find((c) => c.id === id);
-  if (!cat) return;
-  cat.trackGrades = !cat.trackGrades;
   saveData();
   render();
 }
@@ -1472,7 +1462,7 @@ function render() {
         <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
         <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
         <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" style="width:15px;height:15px;"></i> المراجعات المستحقة</div>
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "mistakes"}" onclick="setView('mistakes')"><i data-lucide="alert-triangle" style="width:15px;height:15px;"></i> الأخطاء</div>
+        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "tests"}" onclick="setView('tests')"><i data-lucide="graduation-cap" style="width:15px;height:15px;"></i> الاختبارات</div>
         <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
@@ -1490,8 +1480,8 @@ function render() {
           ? renderExplorer()
           : state.view === "due-reviews"
             ? renderDueReviewsSection()
-            : state.view === "mistakes"
-              ? renderMistakesView()
+            : state.view === "tests"
+              ? renderTestsView()
               : state.view === "settings"
                 ? renderSettingsView()
                 : renderHistory()
@@ -1854,8 +1844,6 @@ function renderHome() {
       }
     </div>
 
-    ${renderGradesCard()}
-
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
         <div style="font-weight:800; font-size:15px;">تقدم المهام الحالية</div>
@@ -2157,10 +2145,9 @@ function renderFileRow(subj, folder, f) {
   const alreadyTask = state.tasks.some((t) => t.fileId === f.id && t.folderId === folder.id && t.subjectId === subj.id);
   const noteExists = hasNoteContent(f);
   const cat = state.categories.find((c) => c.name === f.category);
-  const trackMistakes = !!(cat && cat.trackMistakes);
-  const trackGrades = !!(cat && cat.trackGrades);
   const excludedFromOverall = !!(cat && cat.countsInOverall === false);
-  const fileGrade = trackGrades ? fileGradeStats(subj.id, folder.id, f.id) : null;
+  const grade = categoryIsTest(cat) ? gradeForFile(f.id) : null;
+  const gradePct = grade ? gradeItemPct(grade) : null;
   return `
   <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
     ${
@@ -2176,7 +2163,7 @@ function renderFileRow(subj, folder, f) {
     <div style="flex:1; min-width:0;">
       <div style="display:flex; align-items:center; gap:8px;">
         <div style="font-weight:600; font-size:14px; ${f.done ? "text-decoration:line-through; text-decoration-color:var(--faint);" : ""} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</div>
-        ${fileGrade ? `<span class="mono" style="font-size:11px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0; background:${fileGrade.pct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${fileGrade.pct >= 50 ? "var(--success)" : "#F2795B"};">${fileGrade.pct}%</span>` : ""}
+        ${gradePct !== null ? `<span class="mono" style="font-size:11px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0; background:${gradePct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${gradePct >= 50 ? "var(--success)" : "#F2795B"};">${gradePct}%</span>` : ""}
       </div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(f.category, subj)}
@@ -2185,8 +2172,7 @@ function renderFileRow(subj, folder, f) {
         ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
         ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
         <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
-        ${trackMistakes ? `<span onclick="openModal({type:'mistake', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:var(--warning); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="alert-triangle" style="width:12px;height:12px;"></i> تسجيل غلطة</span>` : ""}
-        ${trackGrades ? `<span onclick="openModal({type:'grade', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="clipboard-check" style="width:12px;height:12px;"></i> تسجيل درجة</span>` : ""}
+        ${categoryIsTest(cat) ? `<span onclick="goToFileInTests('${subj.id}','${folder.id}','${f.id}')" style="color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="graduation-cap" style="width:12px;height:12px;"></i> فتح في الاختبارات</span>` : ""}
       </div>
       ${
         noteExists
@@ -2642,7 +2628,7 @@ function renderCategoriesModal() {
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:720px; max-width:95vw; padding:22px; max-height:88vh; display:flex; flex-direction:column;">
       <div style="font-weight:800; font-size:16px; margin-bottom:4px;">إدارة التصنيفات</div>
-      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تتبع الأخطاء" لأي تصنيف عايز تسجل عليه أخطاء (زي كويز أو واجب). و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي. و"تتبع الدرجات" لأي تصنيف فيه اختبارات عايز تسجل نتيجتها (كويز/واجب/امتحان).</div>
+      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تصنيف اختبار" لأي تصنيف فيه اختبارات عايز تسجل عليه درجات وأخطاء (زي كويز أو واجب) — تلقائيًا هيظهر في "قسم الاختبارات". و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي.</div>
       ${
         state.categories.length
           ? `<div style="overflow-y:auto; flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; margin:-4px -4px 18px; padding:4px;">
@@ -2653,11 +2639,8 @@ function renderCategoriesModal() {
             <span style="width:14px;height:14px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
             <span style="width:110px; flex-shrink:0; font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(c.name)}">${esc(c.name)}</span>
             <div style="display:flex; gap:8px; flex:1; min-width:0;">
-              <div class="cat-pill" data-selected="${!!c.trackMistakes}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryMistakeTracking('${c.id}')">
-                <i data-lucide="alert-triangle" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الأخطاء
-              </div>
-              <div class="cat-pill" data-selected="${!!c.trackGrades}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryTrackGrades('${c.id}')">
-                <i data-lucide="clipboard-check" style="width:11px;height:11px; vertical-align:-2px;"></i> تتبع الدرجات
+              <div class="cat-pill" data-selected="${categoryIsTest(c)}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryIsTest('${c.id}')">
+                <i data-lucide="graduation-cap" style="width:11px;height:11px; vertical-align:-2px;"></i> تصنيف اختبار
               </div>
               <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryCountsInOverall('${c.id}')">
                 <i data-lucide="pie-chart" style="width:11px;height:11px; vertical-align:-2px;"></i> يحسب في التقدم الكلي
@@ -2712,12 +2695,13 @@ function renderMistakeModal(m) {
   const file = folder && m.fileId ? getFile(folder, m.fileId) : null;
   const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
   const showSubjectPicker = !m.subjectId;
-  pickedMistakeTypes = [];
+  const existing = m.mistakeId ? state.mistakes.find((x) => x.id === m.mistakeId) : null;
+  pickedMistakeTypes = existing ? mistakeTypeIdsOf(existing).slice() : [];
   pickedMistakeSubject = m.subjectId || null;
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">تسجيل غلطة</div>
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${existing ? "تعديل الغلطة" : "تسجيل غلطة"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
 
       ${
@@ -2746,33 +2730,53 @@ function renderMistakeModal(m) {
       </div>
 
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">السؤال / ملاحظة (اختياري)</label>
-      <textarea id="mistake-text" class="field-input" rows="3" placeholder="اكتب نص السؤال أو أي تفاصيل عن الغلطة..." style="margin-bottom:20px; resize:vertical;"></textarea>
+      <textarea id="mistake-text" class="field-input" rows="3" placeholder="اكتب نص السؤال أو أي تفاصيل عن الغلطة..." style="margin-bottom:20px; resize:vertical;">${existing ? esc(existing.text || "") : ""}</textarea>
 
       <div style="display:flex; gap:8px; justify-content:flex-end;">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
-        <button class="btn-primary" onclick="submitMistake('${m.folderId || ""}','${m.fileId || ""}')">حفظ</button>
+        <button class="btn-primary" onclick="submitMistake('${m.folderId || ""}','${m.fileId || ""}','${m.mistakeId || ""}')">حفظ</button>
       </div>
     </div>
   </div>`;
 }
-function submitMistake(folderId, fileId) {
+function submitMistake(folderId, fileId, mistakeId) {
   if (!pickedMistakeTypes.length) {
     alert("اختار نوع غلط واحد على الأقل (لو مفيش أنواع، ضيف واحد من صفحة الأخطاء)");
     return;
   }
   const textEl = document.getElementById("mistake-text");
-  state.mistakes.push({
-    id: uid(),
-    typeIds: pickedMistakeTypes.slice(),
-    text: textEl ? textEl.value.trim() : "",
-    subjectId: pickedMistakeSubject || null,
-    folderId: folderId || null,
-    fileId: fileId || null,
-    createdAt: new Date().toISOString(),
-  });
+  const text = textEl ? textEl.value.trim() : "";
+  if (mistakeId) {
+    const existing = state.mistakes.find((x) => x.id === mistakeId);
+    if (existing) {
+      existing.typeIds = pickedMistakeTypes.slice();
+      existing.text = text;
+    }
+  } else {
+    state.mistakes.push({
+      id: uid(),
+      typeIds: pickedMistakeTypes.slice(),
+      text,
+      subjectId: pickedMistakeSubject || null,
+      folderId: folderId || null,
+      fileId: fileId || null,
+      createdAt: new Date().toISOString(),
+    });
+  }
   saveData();
   closeModal();
   render();
+}
+function editMistake(id) {
+  const m = state.mistakes.find((x) => x.id === id);
+  if (!m) return;
+  openModal({
+    type: "mistake",
+    subjectId: m.subjectId || null,
+    folderId: m.folderId || null,
+    fileId: m.fileId || null,
+    mistakeId: id,
+  });
 }
 function deleteMistake(id) {
   if (!confirm("حذف الغلطة دي من السجل؟")) return;
@@ -2855,57 +2859,6 @@ function mistakeTypeIdsOf(m) {
   if (m.typeId) return [m.typeId];
   return [];
 }
-function mistakeStats() {
-  const total = state.mistakes.length;
-  const byType = {};
-  state.mistakes.forEach((m) => {
-    mistakeTypeIdsOf(m).forEach((tid) => {
-      byType[tid] = (byType[tid] || 0) + 1;
-    });
-  });
-  const types = state.mistakeTypes
-    .map((t) => ({ id: t.id, name: t.name, color: t.color, count: byType[t.id] || 0 }))
-    .filter((t) => t.count > 0);
-  const bySubject = {};
-  state.mistakes.forEach((m) => {
-    const key = m.subjectId || "none";
-    if (!bySubject[key]) bySubject[key] = [];
-    bySubject[key].push(m);
-  });
-  return { total, types, bySubject };
-}
-function mistakeFileGroups(mistakes) {
-  const groups = {};
-  mistakes.forEach((m) => {
-    const key = m.fileId ? `file:${m.fileId}` : "general";
-    if (!groups[key])
-      groups[key] = {
-        key,
-        subjectId: m.subjectId || null,
-        folderId: m.folderId || null,
-        fileId: m.fileId || null,
-        items: [],
-      };
-    groups[key].items.push(m);
-  });
-  return groups;
-}
-function mistakeFileGroupLabel(g) {
-  if (!g.fileId) return { title: "أخطاء عامة (بدون ملف)", sub: "" };
-  const subj = g.subjectId ? getSubject(g.subjectId) : null;
-  const folder = subj && g.folderId ? getFolder(subj, g.folderId) : null;
-  const file = folder ? getFile(folder, g.fileId) : null;
-  return { title: file ? file.title : "ملف محذوف", sub: folder ? folder.name : "" };
-}
-function openMistakesSubject(subjectId) {
-  state.mistakesSubjectId = subjectId;
-  state.mistakesFileKey = null;
-  render();
-}
-function openMistakesFileGroup(key) {
-  state.mistakesFileKey = key;
-  render();
-}
 function renderMistakeRow(m) {
   const ids = mistakeTypeIdsOf(m);
   const badges = ids
@@ -2931,136 +2884,15 @@ function renderMistakeRow(m) {
         }
         <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">${dateStr}</div>
       </div>
-      <button onclick="deleteMistake('${m.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;flex-shrink:0;">
-        <i data-lucide="trash-2" style="width:13px;height:13px;"></i>
-      </button>
-    </div>`;
-}
-function renderMistakesStatsCard(stats) {
-  return `
-    <div class="dash-card" style="padding:20px; margin-bottom:20px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
-        <div style="font-weight:800; font-size:15px;">إحصائيات الأخطاء</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button onclick="openModal({type:'mistake-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-            <i data-lucide="settings-2" style="width:13px;height:13px;"></i> إدارة الأنواع
-          </button>
-          <button onclick="openModal({type:'mistake'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="plus" style="width:15px;height:15px;"></i> غلطة جديدة
-          </button>
-        </div>
+      <div style="display:flex; gap:2px; flex-shrink:0;">
+        <button onclick="editMistake('${m.id}')" title="تعديل" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
+          <i data-lucide="pencil" style="width:13px;height:13px;"></i>
+        </button>
+        <button onclick="deleteMistake('${m.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
+          <i data-lucide="trash-2" style="width:13px;height:13px;"></i>
+        </button>
       </div>
-      ${
-        stats.total === 0
-          ? `<div style="text-align:center; color:var(--faint); padding:40px 20px; border:1.5px dashed var(--border); border-radius:12px;">
-              <div style="font-size:13.5px;">لسه مفيش أخطاء متسجلة — سجل غلطة من هنا، أو من زرار "تسجيل غلطة" اللي بيظهر على ملفات التصنيفات اللي فعّلت عليها تتبع الأخطاء</div>
-            </div>`
-          : `
-      <div style="display:flex; align-items:center; gap:16px; margin-bottom:${stats.types.length ? "18px" : "0"};">
-        <div class="mono" style="font-size:32px; font-weight:800;">${stats.total}</div>
-        <div style="color:var(--muted); font-size:13px;">إجمالي الأخطاء المسجلة</div>
-      </div>
-      ${
-        stats.types.length
-          ? `
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft);">
-        ${stats.types
-          .map((t) => {
-            const pct = stats.total ? Math.round((t.count / stats.total) * 100) : 0;
-            return `
-          <div>
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-              <span style="font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px;">
-                <span style="width:9px;height:9px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
-                ${esc(t.name)}
-              </span>
-              <span class="mono" style="font-size:12px; color:var(--muted);">${t.count}</span>
-            </div>
-            <div class="mini-bar"><div style="width:${pct}%; background:${t.color};"></div></div>
-          </div>`;
-          })
-          .join("")}
-      </div>`
-          : ""
-      }
-      `
-      }
     </div>`;
-}
-function renderMistakesSubjectList(stats) {
-  const keys = Object.keys(stats.bySubject);
-  if (!keys.length) return "";
-  const sorted = keys.sort((a, b) => stats.bySubject[b].length - stats.bySubject[a].length);
-  return `
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px;">
-      ${sorted
-        .map((key) => {
-          const subj = key === "none" ? null : getSubject(key);
-          const count = stats.bySubject[key].length;
-          return `
-        <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer;" onclick="openMistakesSubject('${key}')">
-          ${subj ? subjectIconHTML(subj, 28) : '<i data-lucide="help-circle" style="width:28px;height:28px;color:var(--faint);"></i>'}
-          <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${subj ? esc(subj.name) : "بدون مادة"}</div>
-          <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${count} غلطة</div>
-        </div>`;
-        })
-        .join("")}
-    </div>`;
-}
-function renderMistakesFileGroups(mistakes) {
-  const groups = mistakeFileGroups(mistakes);
-  const keys = Object.keys(groups).sort((a, b) => groups[b].items.length - groups[a].items.length);
-  return `
-    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:14px;">
-      ${keys
-        .map((key) => {
-          const g = groups[key];
-          const { title, sub } = mistakeFileGroupLabel(g);
-          return `
-        <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer;" onclick="openMistakesFileGroup('${key}')">
-          ${folderIconSVG("var(--warning)", 30)}
-          <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(title)}</div>
-          <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">${g.items.length} غلطة${sub ? " · " + esc(sub) : ""}</div>
-        </div>`;
-        })
-        .join("")}
-    </div>`;
-}
-function renderMistakesView() {
-  const stats = mistakeStats();
-  const statsCard = renderMistakesStatsCard(stats);
-  if (stats.total === 0) return statsCard;
-
-  if (!state.mistakesSubjectId) {
-    return statsCard + renderMistakesSubjectList(stats);
-  }
-
-  const subjectMistakes = stats.bySubject[state.mistakesSubjectId] || [];
-  const subj = state.mistakesSubjectId === "none" ? null : getSubject(state.mistakesSubjectId);
-  const subjLabel = state.mistakesSubjectId === "none" ? "بدون مادة" : subj ? subj.name : "";
-
-  let breadcrumb = `
-    <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-bottom:14px; flex-wrap:wrap;">
-      <span style="cursor:pointer; color:var(--accent); font-weight:600;" onclick="openMistakesSubject(null)">كل المواد</span>
-      <i data-lucide="chevron-left" style="width:12px;height:12px;"></i>
-      <span style="${state.mistakesFileKey ? "cursor:pointer; color:var(--accent); font-weight:600;" : "font-weight:700;"}" ${state.mistakesFileKey ? `onclick="openMistakesFileGroup(null)"` : ""}>${esc(subjLabel)}</span>`;
-
-  if (!state.mistakesFileKey) {
-    breadcrumb += `</div>`;
-    return statsCard + breadcrumb + renderMistakesFileGroups(subjectMistakes);
-  }
-
-  const groups = mistakeFileGroups(subjectMistakes);
-  const g = groups[state.mistakesFileKey];
-  const { title: fileLabel } = g ? mistakeFileGroupLabel(g) : { title: "" };
-  breadcrumb += `<i data-lucide="chevron-left" style="width:12px;height:12px;"></i><span style="font-weight:700;">${esc(fileLabel)}</span></div>`;
-
-  const groupMistakes = g ? g.items.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)) : [];
-  return (
-    statsCard +
-    breadcrumb +
-    `<div style="display:flex; flex-direction:column; gap:8px;">${groupMistakes.map(renderMistakeRow).join("")}</div>`
-  );
 }
 
 /* ---------------- grades / exam scores ----------------
@@ -3087,14 +2919,27 @@ function renderGradeModal(m) {
   const folder = subj && m.folderId ? getFolder(subj, m.folderId) : null;
   const file = folder && m.fileId ? getFile(folder, m.fileId) : null;
   const precise = !!file;
+  const existing = precise ? gradeForFile(m.fileId) : null;
   const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
-  pickedGradeType = state.gradeTypes[0] ? state.gradeTypes[0].id : null;
+  pickedGradeType = existing ? existing.typeId : state.gradeTypes[0] ? state.gradeTypes[0].id : null;
   pickedGradeSubject = m.subjectId || null;
   gradeBreakdownRowSeq = 0;
+  let initialBreakdownRowsHTML = "";
+  if (existing) {
+    gradeBreakdownParts(existing).forEach((p) => {
+      gradeBreakdownRowSeq += 1;
+      initialBreakdownRowsHTML += gradeBreakdownRowHTML(gradeBreakdownRowSeq, {
+        label: p.label,
+        total: p.total,
+        wrong: p.total - p.correct,
+      });
+    });
+  }
+  const existingWrong = existing ? existing.totalQuestions - existing.correctCount : "";
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:88vh; overflow-y:auto;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">تسجيل درجة</div>
+      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${existing ? "تعديل الدرجة" : "تسجيل درجة"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
 
       ${
@@ -3104,8 +2949,8 @@ function renderGradeModal(m) {
       <input id="grade-title" class="field-input" placeholder="مثال: امتحان نصف الترم" style="margin-bottom:16px;">
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">المادة (اختياري)</label>
       <div id="grade-subject-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-        <div class="cat-pill" data-selected="true" data-subj="" onclick="pickGradeSubject(null)">بدون مادة</div>
-        ${state.subjects.map((s) => `<div class="cat-pill" data-selected="false" data-subj="${s.id}" onclick="pickGradeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
+        <div class="cat-pill" data-selected="${!m.subjectId}" data-subj="" onclick="pickGradeSubject(null)">بدون مادة</div>
+        ${state.subjects.map((s) => `<div class="cat-pill" data-selected="${m.subjectId === s.id}" data-subj="${s.id}" onclick="pickGradeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
       </div>`
           : ""
       }
@@ -3120,24 +2965,24 @@ function renderGradeModal(m) {
                     `<div class="cat-pill" data-selected="${pickedGradeType === t.id}" data-type="${t.id}" onclick="pickGradeType('${t.id}')">${esc(t.name)}</div>`,
                 )
                 .join("")
-            : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي نوع — أضف واحد من كارت "معدل الدرجات"</div>`
+            : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي نوع — أضف واحد من "أنواع الدرجات" في قسم الاختبارات</div>`
         }
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
         <div>
           <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">إجمالي الأسئلة</label>
-          <input id="grade-total" type="number" min="0" class="field-input" placeholder="مثال: 20">
+          <input id="grade-total" type="number" min="0" class="field-input" placeholder="مثال: 20" value="${existing ? existing.totalQuestions : ""}">
         </div>
         <div>
           <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">عدد الغلط</label>
-          <input id="grade-wrong" type="number" min="0" class="field-input" placeholder="مثال: 4">
+          <input id="grade-wrong" type="number" min="0" class="field-input" placeholder="مثال: 4" value="${existingWrong}">
         </div>
       </div>
       <div style="font-size:11px; color:var(--faint); margin-bottom:18px;">هنحسب عدد الصح تلقائي من الفرق بينهم.</div>
 
       <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">تفاصيل إضافية <span style="color:var(--faint); font-weight:500;">(اختياري — زي الصعوبة أو نوع الأسئلة)</span></label>
-      <div id="grade-breakdown-rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;"></div>
+      <div id="grade-breakdown-rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;">${initialBreakdownRowsHTML}</div>
       <button type="button" class="btn-ghost" onclick="addGradeBreakdownRow()" style="font-size:12.5px; padding:7px 14px; margin-bottom:8px;">+ إضافة تفصيل</button>
       <div style="font-size:11px; color:var(--faint); margin-bottom:20px;">اكتب اسم أي تقسيمة عايزها (سهل، متوسط، اختيار من متعدد...) وعدد أسئلتها وعدد الغلط فيها بس — هنحسب الصح تلقائي.</div>
 
@@ -3149,12 +2994,13 @@ function renderGradeModal(m) {
   </div>`;
 }
 let gradeBreakdownRowSeq = 0;
-function gradeBreakdownRowHTML(idx) {
+function gradeBreakdownRowHTML(idx, prefill) {
+  prefill = prefill || {};
   return `
   <div class="grade-bd-row" data-bd-idx="${idx}" style="display:flex; gap:8px; align-items:center;">
-    <input id="grade-bd-label-${idx}" class="field-input" placeholder="مثال: سهل" style="flex:1.3; min-width:0;">
-    <input id="grade-bd-total-${idx}" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" style="flex:1; min-width:0;">
-    <input id="grade-bd-wrong-${idx}" type="number" min="0" class="field-input" placeholder="عدد الغلط" style="flex:1; min-width:0;">
+    <input id="grade-bd-label-${idx}" class="field-input" placeholder="مثال: سهل" value="${esc(prefill.label || "")}" style="flex:1.3; min-width:0;">
+    <input id="grade-bd-total-${idx}" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" value="${prefill.total != null ? prefill.total : ""}" style="flex:1; min-width:0;">
+    <input id="grade-bd-wrong-${idx}" type="number" min="0" class="field-input" placeholder="عدد الغلط" value="${prefill.wrong != null ? prefill.wrong : ""}" style="flex:1; min-width:0;">
     <button type="button" onclick="removeGradeBreakdownRow(${idx})" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px; flex-shrink:0; font-size:17px; line-height:1;">×</button>
   </div>`;
 }
@@ -3170,16 +3016,18 @@ function removeGradeBreakdownRow(idx) {
 }
 function submitGrade(subjectId, folderId, fileId) {
   if (!pickedGradeType) {
-    alert('اختار نوع الدرجة الأول (لو مفيش أنواع، ضيف واحد من كارت "معدل الدرجات")');
+    alert('اختار نوع الدرجة الأول (لو مفيش أنواع، ضيف واحد من "أنواع الدرجات" في قسم الاختبارات)');
     return;
   }
   let title = "";
   let finalSubjectId = subjectId || null;
+  let existing = null;
   if (fileId) {
     const subj = getSubject(subjectId);
     const folder = subj ? getFolder(subj, folderId) : null;
     const file = folder ? getFile(folder, fileId) : null;
     title = file ? file.title : "";
+    existing = gradeForFile(fileId);
   } else {
     const titleEl = document.getElementById("grade-title");
     title = titleEl ? titleEl.value.trim() : "";
@@ -3210,18 +3058,29 @@ function submitGrade(subjectId, folderId, fileId) {
     const wrong = parseInt((document.getElementById(`grade-bd-wrong-${idx}`) || {}).value, 10) || 0;
     if (total > 0) breakdown.push({ label, total, correct: Math.max(0, total - Math.min(wrong, total)) });
   });
-  state.grades.push({
-    id: uid(),
-    typeId: pickedGradeType,
-    title,
-    totalQuestions,
-    correctCount,
-    breakdown,
-    subjectId: finalSubjectId,
-    folderId: fileId ? folderId || null : null,
-    fileId: fileId || null,
-    createdAt: new Date().toISOString(),
-  });
+  if (existing) {
+    existing.typeId = pickedGradeType;
+    existing.title = title;
+    existing.totalQuestions = totalQuestions;
+    existing.correctCount = correctCount;
+    existing.breakdown = breakdown;
+    existing.subjectId = finalSubjectId;
+    existing.folderId = fileId ? folderId || null : null;
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    state.grades.push({
+      id: uid(),
+      typeId: pickedGradeType,
+      title,
+      totalQuestions,
+      correctCount,
+      breakdown,
+      subjectId: finalSubjectId,
+      folderId: fileId ? folderId || null : null,
+      fileId: fileId || null,
+      createdAt: new Date().toISOString(),
+    });
+  }
   saveData();
   closeModal();
   render();
@@ -3295,53 +3154,11 @@ function deleteGradeType(id) {
 function gradeItemPct(g) {
   return g.totalQuestions ? Math.round((g.correctCount / g.totalQuestions) * 100) : 0;
 }
-function fileGradeStats(subjectId, folderId, fileId) {
-  const items = state.grades.filter((g) => g.subjectId === subjectId && g.folderId === folderId && g.fileId === fileId);
-  if (!items.length) return null;
-  const totalQ = items.reduce((s, g) => s + (g.totalQuestions || 0), 0);
-  const totalC = items.reduce((s, g) => s + (g.correctCount || 0), 0);
-  return { count: items.length, pct: totalQ ? Math.round((totalC / totalQ) * 100) : 0 };
+function gradeForFile(fileId) {
+  return state.grades.find((g) => g.fileId === fileId) || null;
 }
-function overallGradeStats() {
-  const totalQ = state.grades.reduce((s, g) => s + (g.totalQuestions || 0), 0);
-  const totalC = state.grades.reduce((s, g) => s + (g.correctCount || 0), 0);
-  const byType = {};
-  state.grades.forEach((g) => {
-    const key = g.typeId || "none";
-    if (!byType[key]) byType[key] = { totalQ: 0, totalC: 0 };
-    byType[key].totalQ += g.totalQuestions || 0;
-    byType[key].totalC += g.correctCount || 0;
-  });
-  const types = state.gradeTypes
-    .map((t) => {
-      const agg = byType[t.id];
-      if (!agg || !agg.totalQ) return null;
-      return { id: t.id, name: t.name, color: t.color, pct: Math.round((agg.totalC / agg.totalQ) * 100) };
-    })
-    .filter(Boolean);
-  return {
-    totalQ,
-    totalC,
-    totalW: totalQ - totalC,
-    pct: totalQ ? Math.round((totalC / totalQ) * 100) : 0,
-    types,
-    count: state.grades.length,
-  };
-}
-function subjectGradeStatsByKey(key) {
-  const items = state.grades.filter((g) => (g.subjectId || "none") === key);
-  const totalQ = items.reduce((s, g) => s + (g.totalQuestions || 0), 0);
-  const totalC = items.reduce((s, g) => s + (g.correctCount || 0), 0);
-  return { items, totalQ, totalC, totalW: totalQ - totalC, pct: totalQ ? Math.round((totalC / totalQ) * 100) : 0 };
-}
-function toggleGradesExpanded() {
-  state.gradesExpanded = !state.gradesExpanded;
-  if (!state.gradesExpanded) state.gradesOpenSubjectId = null;
-  render();
-}
-function openGradesSubject(key) {
-  state.gradesOpenSubjectId = key;
-  render();
+function mistakesForFile(fileId) {
+  return state.mistakes.filter((m) => m.fileId === fileId);
 }
 function gradeBreakdownParts(g) {
   if (Array.isArray(g.breakdown)) return g.breakdown.filter((b) => b && b.total > 0);
@@ -3353,125 +3170,200 @@ function gradeBreakdownParts(g) {
   }
   return [];
 }
-function renderGradeRow(g) {
-  const color = getGradeTypeColor(g.typeId);
-  const typeName = getGradeTypeName(g.typeId);
-  const pct = gradeItemPct(g);
-  const diffParts = gradeBreakdownParts(g);
-  let dateStr = "";
-  try {
-    dateStr = new Date(g.createdAt).toLocaleDateString("ar-EG", { day: "numeric", month: "short" });
-  } catch (e) {}
-  return `
-    <div style="padding:10px 12px; border:1px solid var(--border-soft); border-radius:10px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:${diffParts.length ? "8px" : "4px"};">
-        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
-          <span class="badge" style="background:${color}22; color:${color}; flex-shrink:0;">${esc(typeName)}</span>
-          <span style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(g.title)}</span>
-        </div>
-        <span class="mono" style="font-size:13px; font-weight:700; flex-shrink:0; color:${pct >= 50 ? "var(--success)" : "#F2795B"};">${g.correctCount}/${g.totalQuestions} · ${pct}%</span>
-      </div>
-      ${
-        diffParts.length
-          ? `<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
-              ${diffParts
-                .map(
-                  (d) =>
-                    `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(d.label)}: ${d.correct}/${d.total}</span>`,
-                )
-                .join("")}
-            </div>`
-          : ""
-      }
-      <div style="display:flex; align-items:center; justify-content:space-between;">
-        <span class="mono" style="font-size:10.5px; color:var(--faint);">${dateStr}</span>
-        <button onclick="deleteGrade('${g.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
-          <i data-lucide="trash-2" style="width:13px;height:13px;"></i>
-        </button>
-      </div>
-    </div>`;
+
+/* ---------------- قسم الاختبارات (tests section) ----------------
+   Mirrors the real file/folder tree per subject, filtered to files whose category isTest — no
+   separate data model, no artificial "chapter" grouping. One grade per file (edited in place),
+   any number of mistakes per file. */
+function folderTestItems(subj, folder) {
+  return collectFilesWithFolder(folder)
+    .filter(({ file }) => isTestFile(file))
+    .map(({ folder: ff, file }) => ({ subjectId: subj.id, folderId: ff.id, fileId: file.id, folder: ff, file }));
 }
-function renderGradesDetail() {
-  if (!state.gradesOpenSubjectId) {
-    const keys = [...new Set(state.grades.map((g) => g.subjectId || "none"))];
-    const rows = keys
-      .map((key) => ({ key, subj: key === "none" ? null : getSubject(key), ...subjectGradeStatsByKey(key) }))
-      .sort((a, b) => b.items.length - a.items.length);
-    return `
-    <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-soft); display:flex; flex-direction:column; gap:8px;">
-      ${rows
-        .map(
-          (r) => `
-        <div class="import-row" style="cursor:pointer; padding:10px 12px; border:1px solid var(--border-soft); border-radius:10px;" onclick="openGradesSubject('${r.key}')">
-          <span style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600;">
-            ${r.subj ? subjectIconHTML(r.subj, 15) : '<i data-lucide="help-circle" style="width:15px;height:15px;color:var(--faint);"></i>'}
-            ${r.subj ? esc(r.subj.name) : "بدون مادة"}
-          </span>
-          <span class="mono" style="font-size:12.5px; color:var(--muted);">${r.pct}% · ${r.items.length} اختبار</span>
-        </div>`,
-        )
+function subjectTestItems(subj) {
+  return subjectAllFilesWithFolder(subj)
+    .filter(({ file }) => isTestFile(file))
+    .map(({ folder, file }) => ({ subjectId: subj.id, folderId: folder.id, fileId: file.id, folder, file }));
+}
+function allTestItems() {
+  let items = [];
+  state.subjects.forEach((subj) => {
+    items = items.concat(subjectTestItems(subj));
+  });
+  return items;
+}
+function testFilesStats(items) {
+  let totalQ = 0,
+    totalC = 0,
+    gradedCount = 0,
+    mistakesTotal = 0;
+  const mistakeTypeCounts = {};
+  const gradeTypeAgg = {};
+  items.forEach((it) => {
+    const g = gradeForFile(it.fileId);
+    if (g) {
+      gradedCount++;
+      totalQ += g.totalQuestions || 0;
+      totalC += g.correctCount || 0;
+      const tk = g.typeId || "none";
+      if (!gradeTypeAgg[tk]) gradeTypeAgg[tk] = { totalQ: 0, totalC: 0, count: 0 };
+      gradeTypeAgg[tk].totalQ += g.totalQuestions || 0;
+      gradeTypeAgg[tk].totalC += g.correctCount || 0;
+      gradeTypeAgg[tk].count += 1;
+    }
+    const ms = mistakesForFile(it.fileId);
+    mistakesTotal += ms.length;
+    ms.forEach((m) => mistakeTypeIdsOf(m).forEach((id) => (mistakeTypeCounts[id] = (mistakeTypeCounts[id] || 0) + 1)));
+  });
+  const gradeTypes = state.gradeTypes
+    .map((t) => {
+      const agg = gradeTypeAgg[t.id];
+      if (!agg) return null;
+      return {
+        id: t.id,
+        name: t.name,
+        color: t.color,
+        count: agg.count,
+        pct: agg.totalQ ? Math.round((agg.totalC / agg.totalQ) * 100) : 0,
+      };
+    })
+    .filter(Boolean);
+  const mistakeTypes = state.mistakeTypes
+    .map((t) => ({ id: t.id, name: t.name, color: t.color, count: mistakeTypeCounts[t.id] || 0 }))
+    .filter((t) => t.count > 0);
+  return {
+    totalFiles: items.length,
+    gradedCount,
+    totalQ,
+    totalC,
+    totalW: totalQ - totalC,
+    pct: totalQ ? Math.round((totalC / totalQ) * 100) : 0,
+    mistakesTotal,
+    mistakeTypes,
+    gradeTypes,
+  };
+}
+function openTestsSubject(id) {
+  state.testsSubjectId = id;
+  state.testsOpenFileKey = null;
+  render();
+}
+function isTestFolderCollapsed(folderId) {
+  return !!state.testsCollapsedFolders[folderId];
+}
+function toggleTestFolderCollapsed(folderId) {
+  state.testsCollapsedFolders[folderId] = !state.testsCollapsedFolders[folderId];
+  render();
+}
+function toggleTestsFile(fileId) {
+  state.testsOpenFileKey = state.testsOpenFileKey === fileId ? null : fileId;
+  render();
+}
+function goToFileInTests(subjectId, folderId, fileId) {
+  const subj = getSubject(subjectId);
+  if (!subj) return;
+  state.view = "tests";
+  state.testsSubjectId = subjectId;
+  // make sure every ancestor folder leading to this file is expanded so the row is actually visible
+  const path = findFolderPathIds(subj.folders, folderId, []) || [];
+  path.forEach((fid) => {
+    state.testsCollapsedFolders[fid] = false;
+  });
+  state.testsOpenFileKey = fileId;
+  render();
+  setTimeout(() => {
+    const el = document.getElementById("test-file-row-" + fileId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("flash-highlight");
+      setTimeout(() => el.classList.remove("flash-highlight"), 1600);
+    }
+  }, 60);
+}
+function renderTestsView() {
+  if (!state.testsSubjectId) return renderTestsOverview();
+  const subj = getSubject(state.testsSubjectId);
+  if (!subj) {
+    state.testsSubjectId = null;
+    return renderTestsOverview();
+  }
+  return renderTestsSubjectPage(subj);
+}
+function renderTestsOverview() {
+  const stats = testFilesStats(allTestItems());
+  return (
+    renderTestsStatsCard(stats, { title: "الاختبارات", showManageButtons: true }) +
+    renderTestsMistakeDistribution(stats) +
+    renderTestsSubjectsGrid()
+  );
+}
+function renderTestsSubjectsGrid() {
+  if (!state.subjects.length) return "";
+  return `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:14px;">
+      ${state.subjects
+        .map((subj) => {
+          const s = testFilesStats(subjectTestItems(subj));
+          return `
+        <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer;" onclick="openTestsSubject('${subj.id}')">
+          ${subjectIconHTML(subj, 28)}
+          <div style="font-weight:700; font-size:14px; margin-top:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(subj.name)}</div>
+          <div class="mono" style="font-size:11.5px; color:var(--faint); margin-top:3px;">
+            ${s.totalFiles ? `${s.pct}% · ${s.gradedCount}/${s.totalFiles} اختبار${s.mistakesTotal ? " · " + s.mistakesTotal + " غلطة" : ""}` : "لا يوجد اختبارات"}
+          </div>
+        </div>`;
+        })
         .join("")}
     </div>`;
-  }
-  const key = state.gradesOpenSubjectId;
-  const s = subjectGradeStatsByKey(key);
-  const subj = key === "none" ? null : getSubject(key);
-  return `
-    <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-soft);">
-      <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-bottom:12px; flex-wrap:wrap;">
-        <span style="cursor:pointer; color:var(--accent); font-weight:600;" onclick="openGradesSubject(null)">كل المواد</span>
-        <i data-lucide="chevron-left" style="width:12px;height:12px;"></i>
-        <span style="font-weight:700;">${subj ? esc(subj.name) : "بدون مادة"} <span class="mono" style="color:var(--muted); font-weight:500;">(${s.pct}%)</span></span>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${s.items
-          .slice()
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .map(renderGradeRow)
-          .join("")}
-      </div>
-    </div>`;
 }
-function renderGradesCard() {
-  const stats = overallGradeStats();
+function renderTestsStatsCard(stats, opts) {
+  opts = opts || {};
+  const remaining = stats.totalFiles - stats.gradedCount;
   return `
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
-        <div style="font-weight:800; font-size:15px;">معدل الدرجات</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button onclick="openModal({type:'grade-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-            <i data-lucide="settings-2" style="width:13px;height:13px;"></i> إدارة الأنواع
-          </button>
-          <button onclick="openModal({type:'grade'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="plus" style="width:15px;height:15px;"></i> درجة جديدة
-          </button>
-        </div>
+        <div style="font-weight:800; font-size:15px;">${esc(opts.title || "الاختبارات")}</div>
+        ${
+          opts.showManageButtons
+            ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="openModal({type:'grade-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+                  <i data-lucide="settings-2" style="width:13px;height:13px;"></i> أنواع الدرجات
+                </button>
+                <button onclick="openModal({type:'mistake-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
+                  <i data-lucide="settings-2" style="width:13px;height:13px;"></i> أنواع الأخطاء
+                </button>
+                <button onclick="openModal({type:'grade'${opts.subjectId ? `, subjectId:'${opts.subjectId}'` : ""}})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
+                  <i data-lucide="plus" style="width:15px;height:15px;"></i> درجة جديدة
+                </button>
+              </div>`
+            : ""
+        }
       </div>
       ${
-        stats.count === 0
+        stats.totalFiles === 0
           ? `<div style="text-align:center; color:var(--faint); padding:40px 20px; border:1.5px dashed var(--border); border-radius:12px;">
-              <div style="font-size:13.5px;">لسه مفيش درجات متسجلة — سجل درجة من هنا، أو من زرار "تسجيل درجة" اللي بيظهر على ملفات التصنيفات اللي فعّلت عليها تتبع الدرجات</div>
+              <div style="font-size:13.5px;">لسه مفيش ملفات معلّمة كـ"تصنيف اختبار" — فعّلها من "إدارة التصنيفات" في الرئيسية وهتظهر هنا تلقائي</div>
             </div>`
           : `
-      <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; margin-bottom:${stats.types.length ? "18px" : "0"};">
-        <div style="display:flex; align-items:center; gap:16px;">
-          ${ringHTML(stats.pct, "var(--accent)", 88, 9)}
-          <div>
-            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">المعدل العام لكل المواد</div>
-            <div style="font-size:26px; font-weight:800;">${stats.pct}%</div>
-          </div>
-        </div>
-        <div style="width:1px; align-self:stretch; background:var(--border);"></div>
-        <div style="display:flex; gap:22px; flex-wrap:wrap;">
-          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي الصح</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${stats.totalC}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي الغلط</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${stats.totalW}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">عدد الاختبارات</div><div class="mono" style="font-size:22px; font-weight:600;">${stats.count}</div></div>
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:18px;">
+        ${ringHTML(stats.pct, "var(--accent)", 80, 8)}
+        <div>
+          <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">المعدل العام</div>
+          <div style="font-size:24px; font-weight:800;">${stats.pct}%</div>
         </div>
       </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:14px; padding-top:16px; border-top:1px solid var(--border-soft); margin-bottom:${stats.gradeTypes.length ? "18px" : "0"};">
+        <div><div style="color:var(--muted); font-size:12px;">إجمالي الملفات</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalFiles}</div></div>
+        <div><div style="color:var(--muted); font-size:12px;">إجمالي الأسئلة</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalQ}</div></div>
+        <div><div style="color:var(--muted); font-size:12px;">درجات مسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--success);">${stats.gradedCount}</div></div>
+        <div><div style="color:var(--muted); font-size:12px;">لسه من غير درجة</div><div class="mono" style="font-size:19px; font-weight:600; color:${remaining ? "var(--warning)" : "var(--faint)"};">${remaining}</div></div>
+        <div><div style="color:var(--muted); font-size:12px;">إجمالي الغلط</div><div class="mono" style="font-size:19px; font-weight:600; color:#F2795B;">${stats.totalW}</div></div>
+        <div><div style="color:var(--muted); font-size:12px;">إجمالي الأخطاء المسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--warning);">${stats.mistakesTotal}</div></div>
+      </div>
       ${
-        stats.types.length
-          ? `<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft); margin-bottom:16px;">
-        ${stats.types
+        stats.gradeTypes.length
+          ? `<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft);">
+        ${stats.gradeTypes
           .map(
             (t) => `
           <div>
@@ -3480,7 +3372,7 @@ function renderGradesCard() {
                 <span style="width:9px;height:9px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
                 ${esc(t.name)}
               </span>
-              <span class="mono" style="font-size:12px; color:var(--muted);">${t.pct}%</span>
+              <span class="mono" style="font-size:12px; color:var(--muted);">${t.count} · ${t.pct}%</span>
             </div>
             <div class="mini-bar"><div style="width:${t.pct}%; background:${t.color};"></div></div>
           </div>`,
@@ -3489,16 +3381,147 @@ function renderGradesCard() {
       </div>`
           : ""
       }
-      <div onclick="toggleGradesExpanded()" style="cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; color:var(--accent); font-size:12.5px; font-weight:700; padding-top:${stats.types.length ? "0" : "16px"}; border-top:${stats.types.length ? "none" : "1px solid var(--border-soft)"};">
-        ${state.gradesExpanded ? "إخفاء التفاصيل" : "عرض التفاصيل"}
-        <i data-lucide="${state.gradesExpanded ? "chevron-up" : "chevron-down"}" style="width:14px;height:14px;"></i>
-      </div>
-      ${state.gradesExpanded ? renderGradesDetail() : ""}
       `
       }
     </div>`;
 }
-
+function renderTestsMistakeDistribution(stats) {
+  if (!stats.mistakeTypes.length) return "";
+  return `
+    <div class="dash-card" style="padding:16px 20px; margin-bottom:20px;">
+      <div style="font-weight:800; font-size:13px; color:var(--muted); margin-bottom:12px;">توزيع الأخطاء</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${stats.mistakeTypes
+          .map(
+            (t) =>
+              `<span class="badge" style="background:${t.color}22; color:${t.color}; display:inline-flex; align-items:center; gap:6px;">
+                <span style="width:7px;height:7px;border-radius:50%;background:${t.color};"></span> ${esc(t.name)} · ${t.count}
+              </span>`,
+          )
+          .join("")}
+      </div>
+    </div>`;
+}
+function renderTestsSubjectPage(subj) {
+  const crumb = `
+    <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-bottom:14px; flex-wrap:wrap;">
+      <span style="cursor:pointer; color:var(--accent); font-weight:600;" onclick="openTestsSubject(null)">كل المواد</span>
+      <i data-lucide="chevron-left" style="width:12px;height:12px;"></i>
+      <span style="font-weight:700;">${esc(subj.name)}</span>
+    </div>`;
+  const stats = testFilesStats(subjectTestItems(subj));
+  const header = renderTestsStatsCard(stats, {
+    title: subj.name + " — نظرة عامة",
+    showManageButtons: true,
+    subjectId: subj.id,
+  });
+  return crumb + header + renderTestsMistakeDistribution(stats) + renderTestsSubjectTree(subj);
+}
+/* full nested tree (all levels stacked, like the file explorer) — each folder is independently
+   collapsible so a subject with a deep/wide structure stays manageable without losing overview */
+function buildTestFolderNode(subj, folder) {
+  const ownFiles = (folder.files || []).filter(isTestFile);
+  const children = (folder.folders || []).map((f) => buildTestFolderNode(subj, f)).filter(Boolean);
+  if (!ownFiles.length && !children.length) return null;
+  return { folder, ownFiles, children, stats: testFilesStats(folderTestItems(subj, folder)) };
+}
+function buildTestFolderTree(subj) {
+  return (subj.folders || []).map((f) => buildTestFolderNode(subj, f)).filter(Boolean);
+}
+function renderTestsSubjectTree(subj) {
+  const tree = buildTestFolderTree(subj);
+  if (!tree.length)
+    return `<div style="text-align:center; color:var(--faint); padding:36px 20px; border:1.5px dashed var(--border); border-radius:12px;">
+      <div style="font-size:13.5px;">لا توجد ملفات اختبار في المادة دي</div>
+    </div>`;
+  return tree.map((node) => renderTestFolderNode(subj, node, 0)).join("");
+}
+function renderTestFolderNode(subj, node, depth) {
+  const collapsed = isTestFolderCollapsed(node.folder.id);
+  const s = node.stats;
+  return `
+    <div style="margin-bottom:10px; ${depth ? `margin-inline-start:${depth * 20}px;` : ""}">
+      <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:11px; padding:11px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; cursor:pointer;" onclick="toggleTestFolderCollapsed('${node.folder.id}')">
+        <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:13.5px; min-width:0;">
+          <i data-lucide="${collapsed ? "chevron-left" : "chevron-down"}" style="width:14px;height:14px;color:var(--faint); flex-shrink:0;"></i>
+          ${folderIconSVG(subj.color, 16)}
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(node.folder.name)}</span>
+        </div>
+        <div class="mono" style="font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:12px; flex-shrink:0;">
+          ${s.gradedCount ? `<span style="font-weight:700; color:${s.pct >= 50 ? "var(--success)" : "#F2795B"};">${s.pct}%</span>` : `<span style="color:var(--faint);">من غير درجات</span>`}
+          <span>${s.gradedCount}/${s.totalFiles} اختبار</span>
+          ${s.mistakesTotal ? `<span style="color:var(--warning);">${s.mistakesTotal} غلطة</span>` : ""}
+        </div>
+      </div>
+      ${
+        collapsed
+          ? ""
+          : `<div style="padding-inline-start:14px; border-inline-start:2px solid var(--border-soft); margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+              ${node.ownFiles.map((f) => renderTestsFileRow(subj, node.folder, f)).join("")}
+              ${node.children.map((c) => renderTestFolderNode(subj, c, depth + 1)).join("")}
+            </div>`
+      }
+    </div>`;
+}
+function renderTestsFileRow(subj, folder, f) {
+  const isOpen = state.testsOpenFileKey === f.id;
+  const grade = gradeForFile(f.id);
+  const mistakes = mistakesForFile(f.id);
+  const pct = grade ? gradeItemPct(grade) : null;
+  return `
+  <div id="test-file-row-${f.id}" class="file-row" style="border:1px solid var(--border-soft); border-radius:11px; overflow:hidden;">
+    <div style="display:flex; align-items:center; gap:12px; padding:11px 12px; cursor:pointer;" onclick="toggleTestsFile('${f.id}')">
+      <div style="flex:1; min-width:0; display:flex; align-items:center; gap:8px;">
+        <div style="font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</div>
+        ${categoryBadgeHTML(f.category, subj)}
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        ${grade ? `<span class="mono" style="font-size:12px; font-weight:700; padding:3px 9px; border-radius:20px; background:${pct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${pct >= 50 ? "var(--success)" : "#F2795B"};">${grade.correctCount}/${grade.totalQuestions} · ${pct}%</span>` : `<span style="font-size:11.5px; color:var(--faint);">بدون درجة</span>`}
+        ${mistakes.length ? `<span style="display:flex; align-items:center; gap:3px; color:var(--warning); font-size:12px; font-weight:600;"><i data-lucide="alert-triangle" style="width:12px;height:12px;"></i>${mistakes.length}</span>` : ""}
+        <i data-lucide="${isOpen ? "chevron-up" : "chevron-down"}" style="width:15px;height:15px; color:var(--faint);"></i>
+      </div>
+    </div>
+    ${isOpen ? renderTestsFileDetail(subj, folder, f, grade, mistakes) : ""}
+  </div>`;
+}
+function renderTestsFileDetail(subj, folder, f, grade, mistakes) {
+  const diffParts = grade ? gradeBreakdownParts(grade) : [];
+  return `
+  <div style="padding:2px 12px 14px; border-top:1px solid var(--border-soft);">
+    ${
+      diffParts.length
+        ? `<div style="display:flex; gap:12px; flex-wrap:wrap; margin:10px 0 0;">
+            ${diffParts.map((d) => `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(d.label)}: ${d.correct}/${d.total}</span>`).join("")}
+          </div>`
+        : ""
+    }
+    <div style="margin-top:12px; margin-bottom:8px; font-size:12px; font-weight:700; color:var(--muted);">الأخطاء (${mistakes.length})</div>
+    ${
+      mistakes.length
+        ? `<div style="display:flex; flex-direction:column; gap:8px;">${mistakes
+            .slice()
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .map(renderMistakeRow)
+            .join("")}</div>`
+        : `<div style="font-size:12px; color:var(--faint); margin-bottom:4px;">لا توجد أخطاء مسجلة على هذا الملف</div>`
+    }
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+      <button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px;" onclick="openModal({type:'grade', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})">
+        <i data-lucide="clipboard-check" style="width:12px;height:12px;"></i> ${grade ? "تعديل الدرجة" : "تسجيل الدرجة"}
+      </button>
+      ${
+        grade
+          ? `<button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px; color:#F2795B;" onclick="deleteGrade('${grade.id}')">
+              <i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف الدرجة
+            </button>`
+          : ""
+      }
+      <button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px;" onclick="openModal({type:'mistake', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})">
+        <i data-lucide="plus" style="width:12px;height:12px;"></i> إضافة خطأ
+      </button>
+    </div>
+  </div>`;
+}
 function submitFile(subjectId, folderId, fileId) {
   const title = document.getElementById("f-title").value;
   if (!title.trim()) {
