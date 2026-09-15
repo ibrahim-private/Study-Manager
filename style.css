@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap");
+/* Fonts (Cairo + IBM Plex Mono) are loaded via <link> in index.html, not @import. */
 
 :root {
   --bg: #0a0d14;
@@ -546,4 +546,221 @@ textarea.field-input {
 .flash-highlight {
   animation: flashHighlight 1.6s ease;
   border-radius: 11px;
+}
+
+/* ============================================================================
+   Reusable pieces
+   Extracted from styles that were repeated inline across main.js. Anything that
+   is *computed from data* (a progress width, a per-category colour) stays inline
+   in JS — only fixed presentation lives here.
+   ============================================================================ */
+
+/* --- icon sizes (lucide <i> elements) --- */
+.ico-11 {
+  width: 11px;
+  height: 11px;
+}
+.ico-12 {
+  width: 12px;
+  height: 12px;
+}
+.ico-13 {
+  width: 13px;
+  height: 13px;
+}
+.ico-14 {
+  width: 14px;
+  height: 14px;
+}
+.ico-15 {
+  width: 15px;
+  height: 15px;
+}
+.ico-16 {
+  width: 16px;
+  height: 16px;
+}
+
+/* --- form + modal scaffolding --- */
+.field-label {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.field-label-lg {
+  margin-bottom: 8px;
+}
+.field-hint {
+  font-size: 11px;
+  color: var(--faint);
+}
+.color-input {
+  width: 44px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+  cursor: pointer;
+  background: none;
+  flex-shrink: 0;
+}
+.modal-title {
+  font-weight: 800;
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+.modal-title-tight {
+  margin-bottom: 4px;
+}
+.modal-subtitle {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-bottom: 16px;
+  min-height: 14px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.pill-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+/* --- small buttons / icon buttons --- */
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 12.5px;
+}
+.btn-xs {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--faint);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+.icon-btn:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.icon-btn.danger:hover {
+  color: #f2795b;
+}
+
+/* --- layout helpers --- */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.row-8 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.nowrap {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- text scales --- */
+.t-muted {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.t-muted-sm {
+  color: var(--muted);
+  font-size: 12px;
+}
+.t-faint-sm {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+.section-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+/* --- empty states --- */
+.empty-state {
+  text-align: center;
+  color: var(--faint);
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  padding: 40px 20px;
+  font-size: 13.5px;
+}
+.empty-state.compact {
+  padding: 16px;
+  font-size: 12.5px;
+  border-radius: 10px;
+}
+
+/* --- settings-style list row (categories / types management) --- */
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+.color-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.manage-row-name {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Touch devices have no hover, so actions that only appear on :hover would be
+   unreachable — keep them permanently visible there instead. */
+@media (hover: none) {
+  .hover-actions {
+    opacity: 1;
+  }
+}
+
+.grade-bd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

@@ -3,10 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0d14" />
+    <meta name="description" content="مكتبة الدراسة — نظّم ملفات دراستك وواجباتك وتابع درجاتك وأخطاءك." />
     <title>مكتبة الدراسة</title>
+
+    <!-- Fonts: loaded here (not via @import in CSS) so the browser can start fetching them
+         immediately instead of waiting for the whole stylesheet to be parsed first. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap"
+    />
+
     <link rel="stylesheet" href="style.css" />
-    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- TODO: pin this to an exact version (e.g. lucide@0.XXX.0) instead of @latest.
+         With @latest any breaking release upstream silently breaks every icon in the app. -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>

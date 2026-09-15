@@ -633,21 +633,21 @@ function subjectIconHTML(subj, size) {
 function categoryBadgeHTML(cat, subj) {
   const catColor = getCategoryColor(cat);
   if (cat === "يوتيوب") {
-    return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="play-circle" style="width:11px;height:11px;"></i> ${esc(cat)}</span>`;
+    return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="play-circle" class="ico-11"></i> ${esc(cat)}</span>`;
   }
   if (cat === "واجب") {
-    return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="clipboard-list" style="width:11px;height:11px;"></i> ${esc(cat)}</span>`;
+    return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="clipboard-list" class="ico-11"></i> ${esc(cat)}</span>`;
   }
   if (cat === "منصة") {
     const plat = subj && subj.platformId ? getPlatform(subj.platformId) : null;
     if (plat) {
       const logo = plat.logoUrl
         ? `<img src="${esc(plat.logoUrl)}" style="width:11px;height:11px;object-fit:contain;border-radius:3px;" onerror="this.style.display='none'">`
-        : `<i data-lucide="layout-grid" style="width:11px;height:11px;"></i>`;
+        : `<i data-lucide="layout-grid" class="ico-11"></i>`;
       return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;">${logo} ${esc(plat.name)}</span>`;
     }
   }
-  return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="tag" style="width:11px;height:11px;"></i> ${esc(cat)}</span>`;
+  return `<span class="badge" style="background:${catColor}22; color:${catColor}; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="tag" class="ico-11"></i> ${esc(cat)}</span>`;
 }
 
 // parentFolderId null => add at subject root. Otherwise adds as a subfolder inside that folder (تفرعات).
@@ -1368,6 +1368,84 @@ function deleteCategory(id) {
   saveData();
   render();
 }
+function openCategoryEdit(id) {
+  openModal({ type: "category-edit", categoryId: id });
+}
+// Files store their category by NAME (file.category === "واجب"), not by id, so a rename has to
+// rewrite every file that referenced the old name — otherwise they all silently lose their
+// category (badge disappears, isTest stops applying, grades drop out of قسم الاختبارات).
+function renameCategoryOnFiles(oldName, newName) {
+  if (oldName === newName) return 0;
+  let touched = 0;
+  state.subjects.forEach((subj) => {
+    subjectAllFiles(subj).forEach((file) => {
+      if (file.category === oldName) {
+        file.category = newName;
+        touched += 1;
+      }
+    });
+  });
+  return touched;
+}
+function submitCategoryEdit(id) {
+  const cat = state.categories.find((c) => c.id === id);
+  if (!cat) return;
+  const nameInput = document.getElementById("edit-cat-name");
+  const colorInput = document.getElementById("edit-cat-color");
+  const name = nameInput ? nameInput.value.trim() : "";
+  if (!name) {
+    if (nameInput) nameInput.focus();
+    alert("اكتب اسم للتصنيف");
+    return;
+  }
+  if (state.categories.some((c) => c.id !== id && c.name === name)) {
+    if (nameInput) nameInput.focus();
+    alert("فيه تصنيف تاني بنفس الاسم — اختار اسم مختلف");
+    return;
+  }
+  renameCategoryOnFiles(cat.name, name);
+  cat.name = name;
+  if (colorInput) cat.color = colorInput.value;
+  saveData();
+  closeModal();
+  render();
+}
+function renderCategoryEditModal(m) {
+  const cat = state.categories.find((c) => c.id === m.categoryId);
+  if (!cat) return "";
+  const affected = state.subjects.reduce(
+    (n, subj) => n + subjectAllFiles(subj).filter((f) => f.category === cat.name).length,
+    0,
+  );
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:380px; padding:22px;">
+      <div class="modal-title modal-title-tight">تعديل التصنيف</div>
+      <div class="modal-subtitle">${affected ? `${affected} ملف متصنف بيه حاليًا — الاسم الجديد هيتطبق عليهم كلهم` : "لا يوجد ملفات متصنفة بيه حاليًا"}</div>
+
+      <label class="field-label">اسم التصنيف</label>
+      <input id="edit-cat-name" class="field-input" value="${esc(cat.name)}" style="margin-bottom:16px;"
+             onkeydown="if(event.key==='Enter') submitCategoryEdit('${cat.id}')">
+
+      <label class="field-label field-label-lg">اللون</label>
+      <div class="row-8" style="margin-bottom:12px;">
+        <input id="edit-cat-color" type="color" value="${cat.color}" class="color-input">
+        <div class="pill-row" style="margin-bottom:0;">
+          ${SUBJECT_PALETTE.map(
+            (c) =>
+              `<div class="swatch" data-color="${c}" style="background:${c};" title="${c}" onclick="document.getElementById('edit-cat-color').value='${c}'"></div>`,
+          ).join("")}
+        </div>
+      </div>
+      <div class="field-hint" style="margin-bottom:20px;">اختار من الألوان الجاهزة أو افتح منتقي الألوان لأي لون تاني.</div>
+
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="submitCategoryEdit('${cat.id}')">حفظ</button>
+      </div>
+    </div>
+  </div>`;
+}
 function toggleCategoryIsTest(id) {
   const cat = state.categories.find((c) => c.id === id);
   if (!cat) return;
@@ -1416,10 +1494,10 @@ function renderSelectionBar() {
   <div style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:40; background:var(--surface); border:1px solid var(--border-soft); border-radius:14px; box-shadow:0 8px 30px rgba(0,0,0,0.35); padding:10px 14px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:center;">
     <span class="mono" style="font-size:12.5px; color:var(--muted); white-space:nowrap;">${count} ${count === 1 ? "عنصر محدد" : "عناصر محددة"}</span>
     <button onclick="openMoveSelected()" class="btn-primary" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
-      <i data-lucide="move" style="width:14px;height:14px;"></i> نقل
+      <i data-lucide="move" class="ico-14"></i> نقل
     </button>
     <button onclick="cutSelection()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
-      <i data-lucide="scissors" style="width:14px;height:14px;"></i> قص
+      <i data-lucide="scissors" class="ico-14"></i> قص
     </button>
     <button onclick="clearSelection()" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:8px; font-size:12.5px;">
       إلغاء
@@ -1459,16 +1537,16 @@ function render() {
         <div style="font-weight:800; font-size:17px;">مكتبة الدراسة</div>
       </div>
       <div style="display:flex; gap:6px; background:var(--surface); border:1px solid var(--border-soft); border-radius:12px; padding:4px; overflow-x:auto; max-width:100%;">
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" style="width:15px;height:15px;"></i> الرئيسية</div>
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" style="width:15px;height:15px;"></i> الملفات والمواد</div>
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" style="width:15px;height:15px;"></i> المراجعات المستحقة</div>
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "tests"}" onclick="setView('tests')"><i data-lucide="graduation-cap" style="width:15px;height:15px;"></i> الاختبارات</div>
-        <div class="tab-btn" style="white-space:nowrap; flex-shrink:0;" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" style="width:15px;height:15px;"></i> السجل</div>
+        <div class="tab-btn nowrap" data-active="${state.view === "home"}" onclick="setView('home')"><i data-lucide="layout-dashboard" class="ico-15"></i> الرئيسية</div>
+        <div class="tab-btn nowrap" data-active="${state.view === "explorer"}" onclick="setView('explorer')"><i data-lucide="folder-tree" class="ico-15"></i> الملفات والمواد</div>
+        <div class="tab-btn nowrap" data-active="${state.view === "due-reviews"}" onclick="setView('due-reviews')"><i data-lucide="brain" class="ico-15"></i> المراجعات المستحقة</div>
+        <div class="tab-btn nowrap" data-active="${state.view === "tests"}" onclick="setView('tests')"><i data-lucide="graduation-cap" class="ico-15"></i> الاختبارات</div>
+        <div class="tab-btn nowrap" data-active="${state.view === "history"}" onclick="setView('history')"><i data-lucide="history" class="ico-15"></i> السجل</div>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
         <div class="mono" style="font-size:12px; color:var(--muted); background:var(--surface); border:1px solid var(--border-soft); border-radius:10px; padding:8px 12px; white-space:nowrap;">${esc(todayFormatted())}</div>
         <button onclick="setView('settings')" title="الإعدادات" style="background:${state.view === "settings" ? "var(--accent-soft)" : "var(--surface-3)"}; border:none; border-radius:9px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; color:${state.view === "settings" ? "var(--accent)" : "var(--muted)"}; cursor:pointer; flex-shrink:0;">
-          <i data-lucide="settings" style="width:15px;height:15px;"></i>
+          <i data-lucide="settings" class="ico-15"></i>
         </button>
       </div>
     </div>
@@ -1504,6 +1582,7 @@ function focusModalInput() {
     note: "note-editor",
     platform: "platform-name-input",
     "platform-edit": "platform-name-input",
+    "category-edit": "edit-cat-name",
   };
   const id = ids[state.modal.type];
   if (!id) return;
@@ -1535,14 +1614,14 @@ function renderAuthScreen() {
         </div>
         <div>
           <div style="font-weight:800; font-size:16px;">مكتبة الدراسة</div>
-          <div style="font-size:12px; color:var(--muted);">${isSignup ? "إنشاء حساب جديد" : "تسجيل الدخول لحسابك"}</div>
+          <div class="t-muted-sm">${isSignup ? "إنشاء حساب جديد" : "تسجيل الدخول لحسابك"}</div>
         </div>
       </div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الإيميل</label>
+      <label class="field-label">الإيميل</label>
       <input id="auth-email" type="email" class="field-input" placeholder="example@email.com" style="margin-bottom:14px;" onkeydown="authFieldsOnEnter(event)">
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الباسورد</label>
+      <label class="field-label">الباسورد</label>
       <div style="position:relative; margin-bottom:8px;">
         <input id="auth-password" type="${state.authPwVisible ? "text" : "password"}" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="padding-left:40px;" onkeydown="authFieldsOnEnter(event)">
         <button type="button" onclick="togglePasswordVisibility()" style="position:absolute; left:8px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--muted); cursor:pointer; display:flex; align-items:center; padding:4px;">
@@ -1574,7 +1653,7 @@ function renderDueReviewsSection() {
         <div style="font-weight:800; font-size:16px; display:flex; align-items:center; gap:8px;">
           <i data-lucide="brain" style="width:17px;height:17px; color:var(--success);"></i> مراجعات مستحقة
         </div>
-        ${due.length > 0 ? `<span class="mono" style="font-size:11.5px; color:var(--faint);">${due.length} ${due.length === 1 ? "مراجعة" : "مراجعات"}</span>` : ""}
+        ${due.length > 0 ? `<span class="mono t-faint-sm">${due.length} ${due.length === 1 ? "مراجعة" : "مراجعات"}</span>` : ""}
       </div>
       ${
         due.length === 0
@@ -1592,11 +1671,11 @@ function renderDueReviewsSection() {
             <div style="width:22px; height:22px; border-radius:7px; background:var(--success-soft); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
               <i data-lucide="brain" style="width:13px;height:13px; color:var(--success);"></i>
             </div>
-            <div style="flex:1; min-width:0;">
+            <div class="grow">
               <div style="font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(d.file.title)}</div>
               <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
                 <span class="badge" style="background:var(--success-soft); color:var(--success);">${esc(REVIEW_STAGE_LABELS[d.stage] || "مراجعة")}</span>
-                <span style="font-size:11.5px; color:var(--faint);">${esc(d.subj.name)} / ${esc(d.folder.name)}</span>
+                <span class="t-faint-sm">${esc(d.subj.name)} / ${esc(d.folder.name)}</span>
               </div>
             </div>
             <button onclick="event.stopPropagation(); markReviewDone('${d.subj.id}','${d.folder.id}','${d.file.id}')" class="btn-primary" style="padding:7px 14px; font-size:12.5px; flex-shrink:0;">راجعتها</button>
@@ -1615,13 +1694,13 @@ function renderPlatformsSection() {
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
         <div style="font-weight:800; font-size:16px;">المنصات</div>
         <button onclick="openModal({type:'platform'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px;">
-  <i data-lucide="plus" style="width:14px;height:14px;"></i> منصة جديدة
+  <i data-lucide="plus" class="ico-14"></i> منصة جديدة
 </button>
 ${
   state.platforms.length > 0
     ? `
 <button onclick="openModal({type:'link-subjects'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px;">
-  <i data-lucide="link" style="width:14px;height:14px;"></i> ربط المواد
+  <i data-lucide="link" class="ico-14"></i> ربط المواد
 </button>`
     : ""
 }
@@ -1663,14 +1742,14 @@ function renderSettingsView() {
     <div style="display:flex; flex-direction:column; gap:20px; max-width:640px;">
 
       <div class="dash-card" style="padding:18px;">
-        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">النسخة الاحتياطية</div>
+        <div class="modal-title" style="margin-bottom:14px;">النسخة الاحتياطية</div>
         <div style="color:var(--muted); font-size:12.5px; margin-bottom:14px;">حمّل نسخة من كل بياناتك (المواد، الملفات، المهام، السجل، المنصات، التصنيفات)، أو ارفع نسخة قديمة لاستعادتها.</div>
         <div style="display:flex; gap:10px; flex-wrap:wrap;">
           <button onclick="exportBackup()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="download" style="width:15px;height:15px;"></i> تصدير نسخة احتياطية
+            <i data-lucide="download" class="ico-15"></i> تصدير نسخة احتياطية
           </button>
           <button onclick="triggerImportBackup()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="upload" style="width:15px;height:15px;"></i> استيراد نسخة احتياطية
+            <i data-lucide="upload" class="ico-15"></i> استيراد نسخة احتياطية
           </button>
         </div>
         <input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="handleImportBackup(this)">
@@ -1679,25 +1758,25 @@ function renderSettingsView() {
       ${renderPlatformsSection()}
 
       <div class="dash-card" style="padding:18px;">
-        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">بيانات الحساب</div>
+        <div class="modal-title" style="margin-bottom:14px;">بيانات الحساب</div>
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
           <div>
             <div style="font-size:12px; color:var(--muted); margin-bottom:3px;">الإيميل</div>
             <div class="mono" style="font-size:13.5px; font-weight:600;">${esc(state.user.email || "")}</div>
           </div>
           <button onclick="doLogout()" class="btn-ghost" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="log-out" style="width:15px;height:15px;"></i> تسجيل الخروج
+            <i data-lucide="log-out" class="ico-15"></i> تسجيل الخروج
           </button>
         </div>
       </div>
 
       <div class="dash-card" style="padding:18px;">
-        <div style="font-weight:800; font-size:16px; margin-bottom:14px;">تغيير كلمة السر</div>
-        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">كلمة السر الحالية</label>
+        <div class="modal-title" style="margin-bottom:14px;">تغيير كلمة السر</div>
+        <label class="field-label">كلمة السر الحالية</label>
         <input id="pw-current" type="password" class="field-input" style="margin-bottom:14px;">
-        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">كلمة السر الجديدة</label>
+        <label class="field-label">كلمة السر الجديدة</label>
         <input id="pw-new" type="password" class="field-input" placeholder="6 حروف/أرقام على الأقل" style="margin-bottom:14px;">
-        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تأكيد كلمة السر الجديدة</label>
+        <label class="field-label">تأكيد كلمة السر الجديدة</label>
         <input id="pw-confirm" type="password" class="field-input" style="margin-bottom:14px;">
         ${
           state.settingsPwMsg
@@ -1780,21 +1859,21 @@ function renderHome() {
         ? `
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--success-soft); border:1px solid var(--success); border-radius:12px; padding:10px 14px; margin-bottom:16px; cursor:pointer;" onclick="setView('due-reviews')">
       <div style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--success); font-weight:600;">
-        <i data-lucide="bell" style="width:14px;height:14px;"></i>
+        <i data-lucide="bell" class="ico-14"></i>
         عليك ${dueCount} ${dueCount === 1 ? "مراجعة مستحقة" : "مراجعات مستحقة"} النهاردة
       </div>
       <button onclick="event.stopPropagation(); dismissReviewNotice()" title="إخفاء لحد بكرة" style="background:none; border:none; color:var(--success); cursor:pointer; padding:4px; flex-shrink:0;">
-        <i data-lucide="x" style="width:14px;height:14px;"></i>
+        <i data-lucide="x" class="ico-14"></i>
       </button>
     </div>`
         : ""
     }
 
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div class="row-between" style="margin-bottom:16px;">
         <div style="font-weight:800; font-size:15px;">التقدم الكلي في الدراسة</div>
-        <button onclick="openModal({type:'categories'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-          <i data-lucide="settings-2" style="width:13px;height:13px;"></i> إدارة التصنيفات
+        <button onclick="openModal({type:'categories'})" class="btn-ghost btn-sm row">
+          <i data-lucide="settings-2" class="ico-13"></i> إدارة التصنيفات
         </button>
       </div>
       <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap; margin-bottom:${o.categories.length ? "18px" : "0"};">
@@ -1807,9 +1886,9 @@ function renderHome() {
         </div>
         <div style="width:1px; align-self:stretch; background:var(--border);"></div>
         <div style="display:flex; gap:22px; flex-wrap:wrap;">
-          <div><div style="color:var(--muted); font-size:12.5px;">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${o.done}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${o.remaining}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي الملفات</div><div class="mono" style="font-size:22px; font-weight:600;">${o.total}</div></div>
+          <div><div class="t-muted">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${o.done}</div></div>
+          <div><div class="t-muted">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${o.remaining}</div></div>
+          <div><div class="t-muted">إجمالي الملفات</div><div class="mono" style="font-size:22px; font-weight:600;">${o.total}</div></div>
         </div>
       </div>
       ${
@@ -1826,7 +1905,7 @@ function renderHome() {
                 <span style="width:9px;height:9px;border-radius:50%;background:${color}; flex-shrink:0;"></span>
                 ${esc(c.name)}
               </span>
-              <span class="mono" style="font-size:12px; color:var(--muted);">${c.done} من ${c.total}</span>
+              <span class="mono t-muted-sm">${c.done} من ${c.total}</span>
             </div>
             <div class="mini-bar"><div style="width:${c.pct}%; background:${color};"></div></div>
           </div>`;
@@ -1838,17 +1917,17 @@ function renderHome() {
       ${
         o.excludedCategoryCount > 0
           ? `<div onclick="openModal({type:'categories'})" style="cursor:pointer; opacity:0.55; font-size:11px; color:var(--muted); margin-top:12px; display:flex; align-items:center; gap:5px;">
-              <i data-lucide="eye-off" style="width:11px;height:11px;"></i> ${excludedCategoriesLabel(o.excludedCategoryCount)}
+              <i data-lucide="eye-off" class="ico-11"></i> ${excludedCategoriesLabel(o.excludedCategoryCount)}
             </div>`
           : ""
       }
     </div>
 
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div class="row-between" style="margin-bottom:16px;">
         <div style="font-weight:800; font-size:15px;">تقدم المهام الحالية</div>
-        <button onclick="openModal({type:'import'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-          <i data-lucide="plus" style="width:13px;height:13px;"></i> استيراد ملف كمهمة
+        <button onclick="openModal({type:'import'})" class="btn-ghost btn-sm row">
+          <i data-lucide="plus" class="ico-13"></i> استيراد ملف كمهمة
         </button>
       </div>
       <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
@@ -1861,9 +1940,9 @@ function renderHome() {
         </div>
         <div style="width:1px; align-self:stretch; background:var(--border);"></div>
         <div style="display:flex; gap:22px; flex-wrap:wrap;">
-          <div><div style="color:var(--muted); font-size:12.5px;">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${t.done}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${t.remaining}</div></div>
-          <div><div style="color:var(--muted); font-size:12.5px;">إجمالي المهام</div><div class="mono" style="font-size:22px; font-weight:600;">${t.total}</div></div>
+          <div><div class="t-muted">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${t.done}</div></div>
+          <div><div class="t-muted">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${t.remaining}</div></div>
+          <div><div class="t-muted">إجمالي المهام</div><div class="mono" style="font-size:22px; font-weight:600;">${t.total}</div></div>
         </div>
       </div>
     </div>
@@ -1872,7 +1951,7 @@ function renderHome() {
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
         <div style="font-weight:800; font-size:16px;">المهام</div>
         <button onclick="openModal({type:'import'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-          <i data-lucide="plus" style="width:15px;height:15px;"></i> استيراد ملف كمهمة
+          <i data-lucide="plus" class="ico-15"></i> استيراد ملف كمهمة
         </button>
       </div>
 
@@ -1892,8 +1971,8 @@ function renderHome() {
           </div>
           ${
             doneCount > 0
-              ? `<button onclick="clearCompletedTasks()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-                  <i data-lucide="eraser" style="width:13px;height:13px;"></i> امسح المكتملة
+              ? `<button onclick="clearCompletedTasks()" class="btn-ghost btn-sm row">
+                  <i data-lucide="eraser" class="ico-13"></i> امسح المكتملة
                 </button>`
               : ""
           }
@@ -1926,27 +2005,27 @@ function taskRow(t) {
     <div class="check-btn" data-done="${file.done}" onclick='toggleTaskDone(${JSON.stringify(t)})' style="margin-top:1px;">
       ${file.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ""}
     </div>
-    <div style="flex:1; min-width:0;">
+    <div class="grow">
       <div style="font-weight:600; font-size:14px; ${file.done ? "text-decoration:line-through; text-decoration-color:var(--faint);" : ""} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(file.title)}</div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(file.category, subj)}
-        <span style="font-size:11.5px; color:var(--faint);">${esc(subj.name)} / ${esc(folder.name)}</span>
-        ${file.link ? `<a href="${esc(file.link)}" target="_blank" rel="noopener" style="color:var(--accent); display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="play-circle" style="width:12px;height:12px;"></i> ادخل الدرس</a>` : ""}
-        ${file.pdfLink ? `<a href="${esc(file.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
-        <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${file.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
+        <span class="t-faint-sm">${esc(subj.name)} / ${esc(folder.name)}</span>
+        ${file.link ? `<a href="${esc(file.link)}" target="_blank" rel="noopener" style="color:var(--accent); display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="play-circle" class="ico-12"></i> ادخل الدرس</a>` : ""}
+        ${file.pdfLink ? `<a href="${esc(file.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" class="ico-12"></i> PDF</a>` : ""}
+        <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${file.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" class="ico-12"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
       </div>
       ${
         noteExists
           ? `
       <div id="note-display-${file.id}" class="rich-note-display collapsed">${file.noteHtml || `<p>${esc(file.note)}</p>`}</div>
       <div id="note-toggle-${file.id}" class="note-toggle-btn" onclick="toggleNoteExpand('${file.id}')">
-        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" style="width:12px;height:12px;"></i>
+        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" class="ico-12"></i>
       </div>`
           : ""
       }
     </div>
     <button class="hover-actions" onclick="removeTask('${t.id}')" title="إزالة من المهام" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
-      <i data-lucide="x" style="width:15px;height:15px;"></i>
+      <i data-lucide="x" class="ico-15"></i>
     </button>
   </div>`;
 }
@@ -1977,7 +2056,7 @@ function renderExplorer() {
         </div>
         <div style="padding:10px 14px 14px;">
           <button onclick="openModal({type:'subject'})" style="width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background:none; border:1.5px dashed var(--border); color:var(--muted); border-radius:10px; padding:9px; font-size:13px; font-weight:600; cursor:pointer;">
-            <i data-lucide="plus" style="width:15px;height:15px;"></i> مادة جديدة
+            <i data-lucide="plus" class="ico-15"></i> مادة جديدة
           </button>
         </div>
       </div>
@@ -2025,20 +2104,20 @@ function renderFolderLevel(subj) {
   `;
 
   const headerHTML = `
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+    <div class="row-between" style="margin-bottom:16px;">
       <div style="display:flex; align-items:center; gap:11px;">
         ${
           folder
             ? `
           <button onclick="goUp()" style="background:var(--surface-3); border:none; border-radius:9px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; color:var(--muted); cursor:pointer; flex-shrink:0;">
-            <i data-lucide="arrow-right" style="width:16px;height:16px;"></i>
+            <i data-lucide="arrow-right" class="ico-16"></i>
           </button>
         `
             : subjectIconHTML(subj, 22)
         }
         <div>
           <div style="font-weight:800; font-size:17px;">${folder ? esc(folder.name) : esc(subj.name)}</div>
-          <div class="mono" style="font-size:12px; color:var(--muted);">${
+          <div class="mono t-muted-sm">${
             folder
               ? `${doneCount}/${directFiles.length} ملف مباشر في الفولدر ده`
               : `${sStats.done}/${sStats.total} ملف مكتمل · ${sStats.pct}%`
@@ -2051,10 +2130,10 @@ function renderFolderLevel(subj) {
             ? `
         <div style="display:flex; align-items:center; gap:2px; background:var(--accent-soft); border-radius:10px; padding-left:4px;">
           <button onclick="pasteClipboard()" style="display:flex; align-items:center; gap:6px; background:none; border:none; color:var(--accent); cursor:pointer; padding:8px 10px; font-size:13px; font-weight:600;">
-            <i data-lucide="clipboard-paste" style="width:15px;height:15px;"></i> لصق (${state.clipboard.length})
+            <i data-lucide="clipboard-paste" class="ico-15"></i> لصق (${state.clipboard.length})
           </button>
           <button onclick="cancelClipboard()" title="إلغاء القص" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:6px;">
-            <i data-lucide="x" style="width:13px;height:13px;"></i>
+            <i data-lucide="x" class="ico-13"></i>
           </button>
         </div>`
             : ""
@@ -2063,18 +2142,18 @@ function renderFolderLevel(subj) {
           <i data-lucide="${state.selectionMode ? "x" : "check-square"}" style="width:15px;height:15px;"></i> ${state.selectionMode ? "إلغاء التحديد" : "تحديد"}
         </button>
         <button onclick='openModal({type:"folder", subjectId:"${subj.id}", parentFolderId:${folder ? `"${folder.id}"` : null}})' class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-          <i data-lucide="folder-plus" style="width:15px;height:15px;"></i> فولدر جديد
+          <i data-lucide="folder-plus" class="ico-15"></i> فولدر جديد
         </button>
         ${
           folder
             ? `
           <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}"})' class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-            <i data-lucide="plus" style="width:15px;height:15px;"></i> ملف جديد
+            <i data-lucide="plus" class="ico-15"></i> ملف جديد
           </button>
         `
             : `
           <button onclick="deleteSubject('${subj.id}')" title="حذف المادة" style="background:none; border:1px solid var(--border); border-radius:10px; padding:0 12px; color:var(--faint); cursor:pointer;">
-            <i data-lucide="trash-2" style="width:15px;height:15px;"></i>
+            <i data-lucide="trash-2" class="ico-15"></i>
           </button>
         `
         }
@@ -2105,13 +2184,13 @@ function renderFolderLevel(subj) {
                 </div>`
                 : `<div class="hover-actions" style="position:absolute; top:6px; left:6px; display:flex; gap:2px;">
               <button onclick="event.stopPropagation(); openModal({type:'folder', subjectId:'${subj.id}', parentFolderId:${folder ? `'${folder.id}'` : "null"}, folderId:'${f.id}'})" title="إعادة تسمية" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
-                <i data-lucide="pencil" style="width:13px;height:13px;"></i>
+                <i data-lucide="pencil" class="ico-13"></i>
               </button>
               <button onclick="event.stopPropagation(); openModal({type:'move-folder', subjectId:'${subj.id}', folderId:'${f.id}'})" title="نقل الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
-                <i data-lucide="move" style="width:13px;height:13px;"></i>
+                <i data-lucide="move" class="ico-13"></i>
               </button>
               <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
-                <i data-lucide="x" style="width:13px;height:13px;"></i>
+                <i data-lucide="x" class="ico-13"></i>
               </button>
             </div>`
             }
@@ -2160,7 +2239,7 @@ function renderFileRow(subj, folder, f) {
     <div class="check-btn" data-done="${f.done}" onclick="toggleFile('${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
       ${f.done ? '<i data-lucide="check" style="width:14px;height:14px;color:#06110B;"></i>' : ""}
     </div>
-    <div style="flex:1; min-width:0;">
+    <div class="grow">
       <div style="display:flex; align-items:center; gap:8px;">
         <div style="font-weight:600; font-size:14px; ${f.done ? "text-decoration:line-through; text-decoration-color:var(--faint);" : ""} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</div>
         ${gradePct !== null ? `<span class="mono" style="font-size:11px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0; background:${gradePct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${gradePct >= 50 ? "var(--success)" : "#F2795B"};">${gradePct}%</span>` : ""}
@@ -2168,31 +2247,31 @@ function renderFileRow(subj, folder, f) {
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(f.category, subj)}
         ${excludedFromOverall ? `<span title="التصنيف ده مستبعد من حساب التقدم الكلي" style="font-size:10.5px; color:var(--faint); opacity:0.7; display:flex; align-items:center; gap:3px;"><i data-lucide="eye-off" style="width:10px;height:10px;"></i> غير محسوب في التقدم</span>` : ""}
-        ${f.link ? `<a href="${esc(f.link)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="link-2" style="width:12px;height:12px;"></i> رابط الدرس</a>` : ""}
-        ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" style="width:12px;height:12px;"></i> PDF</a>` : ""}
-        ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" style="width:11px;height:11px;"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" style="width:11px;height:11px;"></i> إضافة كمهمة</span>`}
-        <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" style="width:12px;height:12px;"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
-        ${categoryIsTest(cat) ? `<span onclick="goToFileInTests('${subj.id}','${folder.id}','${f.id}')" style="color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="graduation-cap" style="width:12px;height:12px;"></i> فتح في الاختبارات</span>` : ""}
+        ${f.link ? `<a href="${esc(f.link)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="link-2" class="ico-12"></i> رابط الدرس</a>` : ""}
+        ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" class="ico-12"></i> PDF</a>` : ""}
+        ${alreadyTask ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px;"><i data-lucide="check-circle" class="ico-11"></i> ضمن المهام</span>` : `<span onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="font-size:11px; color:var(--accent); cursor:pointer; font-weight:600; display:flex; align-items:center; gap:3px;"><i data-lucide="import" class="ico-11"></i> إضافة كمهمة</span>`}
+        <span onclick="openModal({type:'note', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" style="color:${noteExists ? "var(--warning)" : "var(--faint)"}; cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="sticky-note" class="ico-12"></i> ${noteExists ? "تعديل الملاحظة" : "إضافة ملاحظة"}</span>
+        ${categoryIsTest(cat) ? `<span onclick="goToFileInTests('${subj.id}','${folder.id}','${f.id}')" style="color:var(--accent); cursor:pointer; display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="graduation-cap" class="ico-12"></i> فتح في الاختبارات</span>` : ""}
       </div>
       ${
         noteExists
           ? `
       <div id="note-display-${f.id}" class="rich-note-display collapsed">${f.noteHtml || `<p>${esc(f.note)}</p>`}</div>
       <div id="note-toggle-${f.id}" class="note-toggle-btn" onclick="toggleNoteExpand('${f.id}')">
-        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" style="width:12px;height:12px;"></i>
+        <span class="note-toggle-label">عرض المزيد</span><i data-lucide="chevron-down" class="ico-12"></i>
       </div>`
           : ""
       }
     </div>
     <div class="hover-actions" style="display:flex; gap:4px; flex-shrink:0;">
       <button onclick='openModal({type:"file", subjectId:"${subj.id}", folderId:"${folder.id}", fileId:"${f.id}"})' title="تعديل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
-        <i data-lucide="pencil" style="width:14px;height:14px;"></i>
+        <i data-lucide="pencil" class="ico-14"></i>
       </button>
       <button onclick="openModal({type:'move-file', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})" title="نقل الملف" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
-        <i data-lucide="move" style="width:14px;height:14px;"></i>
+        <i data-lucide="move" class="ico-14"></i>
       </button>
       <button onclick="deleteFile('${subj.id}','${folder.id}','${f.id}')" title="حذف" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px;">
-        <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+        <i data-lucide="trash-2" class="ico-14"></i>
       </button>
     </div>
   </div>`;
@@ -2222,7 +2301,7 @@ function renderHistory() {
         <div class="dash-card" style="padding:16px 18px;">
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
             <div style="font-weight:800; font-size:14.5px;">${esc(formatDateLabel(date))}</div>
-            <span class="mono" style="font-size:11.5px; color:var(--faint);">${entries.length} ${entries.length === 1 ? "مهمة" : "مهام"}</span>
+            <span class="mono t-faint-sm">${entries.length} ${entries.length === 1 ? "مهمة" : "مهام"}</span>
           </div>
           <div style="display:flex; flex-direction:column; gap:6px;">
             ${entries.map(renderHistoryRow).join("")}
@@ -2252,19 +2331,19 @@ function renderHistoryRow(h) {
     <div style="width:22px; height:22px; border-radius:7px; background:var(--success); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
       <i data-lucide="check" style="width:14px;height:14px; color:#06110B;"></i>
     </div>
-    <div style="flex:1; min-width:0;">
+    <div class="grow">
       <div style="font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(h.title)}</div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:4px; flex-wrap:wrap;">
         <span class="badge" style="background:${catColor}22; color:${catColor};">${esc(h.category)}</span>
-        <span style="font-size:11.5px; color:var(--faint);">${esc(h.subjectName)} / ${esc(h.folderName)}</span>
+        <span class="t-faint-sm">${esc(h.subjectName)} / ${esc(h.folderName)}</span>
         ${h.time ? `<span class="mono" style="font-size:11px; color:var(--faint);">${esc(h.time)}</span>` : ""}
       </div>
     </div>
     <button class="hover-actions" onclick="openModal({type:'history-edit', id:'${h.id}'})" title="تعديل تاريخ ووقت المهمة" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
-      <i data-lucide="pencil" style="width:15px;height:15px;"></i>
+      <i data-lucide="pencil" class="ico-15"></i>
     </button>
     <button class="hover-actions" onclick="removeHistoryEntry('${h.id}')" title="حذف من السجل" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:6px; flex-shrink:0;">
-      <i data-lucide="x" style="width:15px;height:15px;"></i>
+      <i data-lucide="x" class="ico-15"></i>
     </button>
   </div>`;
 }
@@ -2278,6 +2357,7 @@ function renderModal() {
   if (m.type === "import") return renderImportModal();
   if (m.type === "move-file" || m.type === "move-folder" || m.type === "move-multi") return renderMoveModal(m);
   if (m.type === "categories") return renderCategoriesModal();
+  if (m.type === "category-edit") return renderCategoryEditModal(m);
   if (m.type === "mistake") return renderMistakeModal(m);
   if (m.type === "mistake-types") return renderMistakeTypesModal();
   if (m.type === "grade") return renderGradeModal(m);
@@ -2296,13 +2376,13 @@ function renderHistoryEditModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:340px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">تعديل تاريخ ووقت الإنجاز</div>
+      <div class="modal-title modal-title-tight">تعديل تاريخ ووقت الإنجاز</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(h.title)}</div>
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">التاريخ</label>
+      <label class="field-label">التاريخ</label>
       <input id="hist-date-input" type="date" class="field-input" value="${esc(h.date || "")}" style="margin-bottom:16px;">
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">الساعة</label>
+      <label class="field-label">الساعة</label>
       <input id="hist-time-input" type="time" class="field-input" value="${esc(h.time || "")}" style="margin-bottom:20px;">
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="saveHistoryEdit('${h.id}')">حفظ</button>
       </div>
@@ -2345,15 +2425,15 @@ function renderPlatformModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:360px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${editing ? "تعديل المنصة" : "منصة جديدة"}</div>
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم المنصة</label>
+      <div class="modal-title">${editing ? "تعديل المنصة" : "منصة جديدة"}</div>
+      <label class="field-label">اسم المنصة</label>
       <input id="platform-name-input" class="field-input" placeholder="مثال: يوتيوب، نون أكاديمي..." value="${editing ? esc(p.name) : ""}" style="margin-bottom:16px;">
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط اللوجو (اختياري)</label>
+      <label class="field-label">رابط اللوجو (اختياري)</label>
       <input id="platform-logo-input" class="field-input" placeholder="https://..." value="${editing ? esc(p.logoUrl || "") : ""}" style="margin-bottom:16px;">
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط المنصة (اختياري)</label>
+      <label class="field-label">رابط المنصة (اختياري)</label>
       <input id="platform-link-input" class="field-input" placeholder="https://..." value="${editing ? esc(p.link || "") : ""}">
       <div style="color:var(--faint); font-size:11px; margin-top:6px; margin-bottom:20px;">لو حطيته، الدوس على المنصة في الرئيسية هيوديك عليه في تاب جديد</div>
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="${editing ? `submitPlatformEdit('${p.id}')` : "submitPlatform()"}">${editing ? "حفظ" : "إضافة"}</button>
       </div>
@@ -2388,7 +2468,7 @@ function renderLinkSubjectsModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:14px;">ربط المواد بالمنصات</div>
+      <div class="modal-title" style="margin-bottom:14px;">ربط المواد بالمنصات</div>
       <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px; display:flex; flex-direction:column; gap:16px;">
         ${
           state.subjects.length === 0
@@ -2438,20 +2518,20 @@ function renderNoteModal(m) {
       ${!noteExists ? `<div style="color:var(--faint); font-size:12.5px; margin-bottom:8px;">لا توجد ملاحظة على الملف ده لسه — عايز تضيف واحدة؟</div>` : ""}
 
       <div class="note-toolbar" id="note-toolbar">
-        <button type="button" class="note-tool-btn" data-cmd="bold" onmousedown="event.preventDefault()" onclick="noteExec('bold')" title="عريض"><i data-lucide="bold" style="width:15px;height:15px;"></i></button>
-        <button type="button" class="note-tool-btn" data-cmd="italic" onmousedown="event.preventDefault()" onclick="noteExec('italic')" title="مائل"><i data-lucide="italic" style="width:15px;height:15px;"></i></button>
-        <button type="button" class="note-tool-btn" data-cmd="underline" onmousedown="event.preventDefault()" onclick="noteExec('underline')" title="تسطير"><i data-lucide="underline" style="width:15px;height:15px;"></i></button>
+        <button type="button" class="note-tool-btn" data-cmd="bold" onmousedown="event.preventDefault()" onclick="noteExec('bold')" title="عريض"><i data-lucide="bold" class="ico-15"></i></button>
+        <button type="button" class="note-tool-btn" data-cmd="italic" onmousedown="event.preventDefault()" onclick="noteExec('italic')" title="مائل"><i data-lucide="italic" class="ico-15"></i></button>
+        <button type="button" class="note-tool-btn" data-cmd="underline" onmousedown="event.preventDefault()" onclick="noteExec('underline')" title="تسطير"><i data-lucide="underline" class="ico-15"></i></button>
         <div style="width:1px; align-self:stretch; background:var(--border); margin:2px 2px;"></div>
-        <button type="button" class="note-tool-btn" data-cmd="insertUnorderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertUnorderedList')" title="قائمة نقطية"><i data-lucide="list" style="width:15px;height:15px;"></i></button>
-        <button type="button" class="note-tool-btn" data-cmd="insertOrderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertOrderedList')" title="قائمة مرقمة"><i data-lucide="list-ordered" style="width:15px;height:15px;"></i></button>
+        <button type="button" class="note-tool-btn" data-cmd="insertUnorderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertUnorderedList')" title="قائمة نقطية"><i data-lucide="list" class="ico-15"></i></button>
+        <button type="button" class="note-tool-btn" data-cmd="insertOrderedList" onmousedown="event.preventDefault()" onclick="noteExec('insertOrderedList')" title="قائمة مرقمة"><i data-lucide="list-ordered" class="ico-15"></i></button>
         <div style="width:1px; align-self:stretch; background:var(--border); margin:2px 2px;"></div>
         <button type="button" class="note-tool-btn" data-cmd="superscript" onmousedown="event.preventDefault()" onclick="noteExec('superscript')" title="أس (X²) — للأسس في الرياضيات"><span class="mono" style="font-size:12px;font-weight:700;">X²</span></button>
         <button type="button" class="note-tool-btn" data-cmd="subscript" onmousedown="event.preventDefault()" onclick="noteExec('subscript')" title="دليل سفلي (X₂) — لأرقام المعادلات الكيميائية"><span class="mono" style="font-size:12px;font-weight:700;">X₂</span></button>
         <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="insertNoteFraction()" title="كسر بشرطة (a/b) — لقوانين الفيزياء"><span class="mono" style="font-size:11px;font-weight:700;">a/b</span></button>
         <div style="width:1px; align-self:stretch; background:var(--border); margin:2px 2px;"></div>
-        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="toggleNoteSymbols()" title="رموز رياضية وكيميائية"><i data-lucide="sigma" style="width:15px;height:15px;"></i></button>
-        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault(); saveNoteSelection();" onclick="document.getElementById('note-image-input').click()" title="رفع صورة"><i data-lucide="image-plus" style="width:15px;height:15px;"></i></button>
-        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="noteExec('removeFormat')" title="مسح التنسيق"><i data-lucide="eraser" style="width:15px;height:15px;"></i></button>
+        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="toggleNoteSymbols()" title="رموز رياضية وكيميائية"><i data-lucide="sigma" class="ico-15"></i></button>
+        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault(); saveNoteSelection();" onclick="document.getElementById('note-image-input').click()" title="رفع صورة"><i data-lucide="image-plus" class="ico-15"></i></button>
+        <button type="button" class="note-tool-btn" onmousedown="event.preventDefault()" onclick="noteExec('removeFormat')" title="مسح التنسيق"><i data-lucide="eraser" class="ico-15"></i></button>
       </div>
 
       <div id="note-symbols-row" class="note-symbols-row" data-open="false">
@@ -2510,20 +2590,20 @@ function renderSubjectModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:360px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">مادة جديدة</div>
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم المادة</label>
+      <div class="modal-title">مادة جديدة</div>
+      <label class="field-label">اسم المادة</label>
       <input id="subj-name-input" class="field-input" placeholder="مثال: رياضيات" style="margin-bottom:16px;">
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">اللون</label>
+      <label class="field-label field-label-lg">اللون</label>
       <div id="swatch-row" style="display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap;">
         ${SUBJECT_PALETTE.map((c, i) => `<div class="swatch" data-selected="${i === 0}" data-color="${c}" style="background:${c};" onclick="pickSwatch('${c}')"></div>`).join("")}
       </div>
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">المنصة (اختياري)</label>
+      <label class="field-label field-label-lg">المنصة (اختياري)</label>
       <div id="platform-pick-row" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
         <div class="cat-pill" data-selected="true" data-platform="" onclick="pickSubjectPlatform('')">بدون منصة</div>
         ${state.platforms.map((p) => `<div class="cat-pill" data-selected="false" data-platform="${p.id}" onclick="pickSubjectPlatform('${p.id}')">${esc(p.name)}</div>`).join("")}
       </div>
       ${state.platforms.length === 0 ? `<div style="color:var(--faint); font-size:11px; margin-top:-14px; margin-bottom:16px;">لسه مفيش منصات — تقدر تضيفها من الرئيسية</div>` : ""}
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="submitSubject()">إضافة</button>
       </div>
@@ -2556,10 +2636,10 @@ function renderFolderModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:360px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${existing ? "تعديل اسم الفولدر" : "فولدر جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${contextLabel}</span></div>
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم الفولدر</label>
+      <div class="modal-title">${existing ? "تعديل اسم الفولدر" : "فولدر جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${contextLabel}</span></div>
+      <label class="field-label">اسم الفولدر</label>
       <input id="folder-name-input" class="field-input" placeholder="مثال: المحاضرات، الواجبات..." value="${existing ? esc(existing.name) : ""}" style="margin-bottom:20px;">
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="submitFolder('${subj.id}', ${m.parentFolderId ? `'${m.parentFolderId}'` : "null"}, ${existing ? `'${existing.id}'` : "null"})">${existing ? "حفظ" : "إضافة"}</button>
       </div>
@@ -2582,12 +2662,12 @@ function renderFileModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px; max-height:88vh; overflow-y:auto;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">${existing ? "تعديل الملف" : "ملف جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${esc(subj.name)} / ${esc(folder.name)}</span></div>
+      <div class="modal-title">${existing ? "تعديل الملف" : "ملف جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${esc(subj.name)} / ${esc(folder.name)}</span></div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">اسم الملف</label>
+      <label class="field-label">اسم الملف</label>
       <input id="f-title" class="field-input" placeholder="مثال: الدرس الثالث - الطاقة الحركية" value="${existing ? esc(existing.title) : ""}" style="margin-bottom:16px;">
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">التصنيف</label>
+      <label class="field-label field-label-lg">التصنيف</label>
       <div id="cat-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
         ${
           categories.length
@@ -2601,13 +2681,13 @@ function renderFileModal(m) {
         }
       </div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط المنصة / الدرس (اختياري)</label>
+      <label class="field-label">رابط المنصة / الدرس (اختياري)</label>
       <input id="f-link" class="field-input" placeholder="https://..." value="${existing ? esc(existing.link || "") : ""}" style="margin-bottom:16px;">
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">رابط ملف PDF (اختياري)</label>
+      <label class="field-label">رابط ملف PDF (اختياري)</label>
       <input id="f-pdf" class="field-input" placeholder="https://..." value="${existing ? esc(existing.pdfLink || "") : ""}" style="margin-bottom:16px;">
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">ملاحظة (اختياري)</label>
+      <label class="field-label">ملاحظة (اختياري)</label>
       <textarea id="f-note" class="field-input" placeholder="أي ملاحظة بسيطة على الملف...">${existing ? esc(existing.note || "") : ""}</textarea>
 
       <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:20px;">
@@ -2627,7 +2707,7 @@ function renderCategoriesModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:720px; max-width:95vw; padding:22px; max-height:88vh; display:flex; flex-direction:column;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">إدارة التصنيفات</div>
+      <div class="modal-title modal-title-tight">إدارة التصنيفات</div>
       <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تصنيف اختبار" لأي تصنيف فيه اختبارات عايز تسجل عليه درجات وأخطاء (زي كويز أو واجب) — تلقائيًا هيظهر في "قسم الاختبارات". و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي.</div>
       ${
         state.categories.length
@@ -2635,33 +2715,36 @@ function renderCategoriesModal() {
         ${state.categories
           .map(
             (c) => `
-          <div style="display:flex; align-items:center; gap:10px; padding:9px 10px; border:1px solid var(--border-soft); border-radius:10px;">
-            <span style="width:14px;height:14px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
-            <span style="width:110px; flex-shrink:0; font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(c.name)}">${esc(c.name)}</span>
-            <div style="display:flex; gap:8px; flex:1; min-width:0;">
-              <div class="cat-pill" data-selected="${categoryIsTest(c)}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryIsTest('${c.id}')">
-                <i data-lucide="graduation-cap" style="width:11px;height:11px; vertical-align:-2px;"></i> تصنيف اختبار
+          <div class="manage-row">
+            <span class="color-dot" style="background:${c.color};"></span>
+            <span class="manage-row-name" title="${esc(c.name)}">${esc(c.name)}</span>
+            <div class="row-8 grow">
+              <div class="cat-pill" data-selected="${categoryIsTest(c)}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap;" onclick="toggleCategoryIsTest('${c.id}')">
+                <i data-lucide="graduation-cap" class="ico-11" style="vertical-align:-2px;"></i> تصنيف اختبار
               </div>
-              <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap; text-align:center;" onclick="toggleCategoryCountsInOverall('${c.id}')">
-                <i data-lucide="pie-chart" style="width:11px;height:11px; vertical-align:-2px;"></i> يحسب في التقدم الكلي
+              <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap;" onclick="toggleCategoryCountsInOverall('${c.id}')">
+                <i data-lucide="pie-chart" class="ico-11" style="vertical-align:-2px;"></i> يحسب في التقدم الكلي
               </div>
             </div>
-            <button onclick="deleteCategory('${c.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px; flex-shrink:0;">
-              <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+            <button onclick="openCategoryEdit('${c.id}')" title="تعديل الاسم واللون" class="icon-btn">
+              <i data-lucide="pencil" class="ico-14"></i>
+            </button>
+            <button onclick="deleteCategory('${c.id}')" title="حذف" class="icon-btn danger">
+              <i data-lucide="trash-2" class="ico-14"></i>
             </button>
           </div>`,
           )
           .join("")}
       </div>`
-          : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي تصنيف</div>`
+          : `<div class="empty-state compact" style="margin-bottom:18px;">لسه معملتش أي تصنيف</div>`
       }
       <div style="flex-shrink:0;">
-        <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">تصنيف جديد</label>
+        <label class="field-label">تصنيف جديد</label>
         <div style="display:flex; gap:8px; margin-bottom:16px;">
           <input id="new-cat-name" class="field-input" placeholder="مثال: كويز، مذاكرة، ملخص..." style="flex:1;">
-          <input id="new-cat-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+          <input id="new-cat-color" type="color" value="#5AA9E6" class="color-input">
         </div>
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <div class="modal-actions">
           <button class="btn-ghost" onclick="closeModal()">تم</button>
           <button class="btn-primary" onclick="addCategory()">إضافة</button>
         </div>
@@ -2701,13 +2784,13 @@ function renderMistakeModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${existing ? "تعديل الغلطة" : "تسجيل غلطة"}</div>
+      <div class="modal-title modal-title-tight">${existing ? "تعديل الغلطة" : "تسجيل غلطة"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
 
       ${
         showSubjectPicker
           ? `
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">المادة (اختياري)</label>
+      <label class="field-label field-label-lg">المادة (اختياري)</label>
       <div id="mistake-subject-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
         <div class="cat-pill" data-selected="true" data-subj="" onclick="pickMistakeSubject(null)">بدون مادة</div>
         ${state.subjects.map((s) => `<div class="cat-pill" data-selected="false" data-subj="${s.id}" onclick="pickMistakeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
@@ -2715,7 +2798,7 @@ function renderMistakeModal(m) {
           : ""
       }
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">نوع الغلط <span style="color:var(--faint); font-weight:500;">(اختار أكتر من واحد لو حابب)</span></label>
+      <label class="field-label field-label-lg">نوع الغلط <span style="color:var(--faint); font-weight:500;">(اختار أكتر من واحد لو حابب)</span></label>
       <div id="mistake-type-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
         ${
           state.mistakeTypes.length
@@ -2729,10 +2812,10 @@ function renderMistakeModal(m) {
         }
       </div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">السؤال / ملاحظة (اختياري)</label>
+      <label class="field-label">السؤال / ملاحظة (اختياري)</label>
       <textarea id="mistake-text" class="field-input" rows="3" placeholder="اكتب نص السؤال أو أي تفاصيل عن الغلطة..." style="margin-bottom:20px; resize:vertical;">${existing ? esc(existing.text || "") : ""}</textarea>
 
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="submitMistake('${m.folderId || ""}','${m.fileId || ""}','${m.mistakeId || ""}')">حفظ</button>
       </div>
@@ -2788,7 +2871,7 @@ function renderMistakeTypesModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:400px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">إدارة أنواع الأخطاء</div>
+      <div class="modal-title">إدارة أنواع الأخطاء</div>
       ${
         state.mistakeTypes.length
           ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
@@ -2798,21 +2881,21 @@ function renderMistakeTypesModal() {
           <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
             <span style="width:14px;height:14px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
             <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(t.name)}</span>
-            <button onclick="deleteMistakeType('${t.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
-              <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+            <button onclick="deleteMistakeType('${t.id}')" title="حذف" class="icon-btn">
+              <i data-lucide="trash-2" class="ico-14"></i>
             </button>
           </div>`,
           )
           .join("")}
       </div>`
-          : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي نوع غلط</div>`
+          : `<div class="empty-state compact" style="margin-bottom:18px;">لسه معملتش أي نوع غلط</div>`
       }
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">نوع جديد</label>
+      <label class="field-label">نوع جديد</label>
       <div style="display:flex; gap:8px; margin-bottom:20px;">
         <input id="new-mtype-name" class="field-input" placeholder="مثال: تسرع، سوء فهم السؤال..." style="flex:1;">
-        <input id="new-mtype-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+        <input id="new-mtype-color" type="color" value="#5AA9E6" class="color-input">
       </div>
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">تم</button>
         <button class="btn-primary" onclick="addMistakeType()">إضافة</button>
       </div>
@@ -2875,7 +2958,7 @@ function renderMistakeRow(m) {
   return `
     <div style="display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid var(--border-soft); border-radius:10px;">
       <div style="display:flex; flex-wrap:wrap; gap:4px; flex-shrink:0; max-width:120px;">${badges || '<span class="badge" style="background:var(--surface-3); color:var(--faint);">بدون نوع</span>'}</div>
-      <div style="flex:1; min-width:0;">
+      <div class="grow">
         ${m.text ? `<div style="font-size:13px; margin-bottom:4px;">${esc(m.text)}</div>` : ""}
         ${
           loc && (loc.folder || loc.file)
@@ -2885,11 +2968,11 @@ function renderMistakeRow(m) {
         <div class="mono" style="font-size:10.5px; color:var(--faint); margin-top:2px;">${dateStr}</div>
       </div>
       <div style="display:flex; gap:2px; flex-shrink:0;">
-        <button onclick="editMistake('${m.id}')" title="تعديل" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
-          <i data-lucide="pencil" style="width:13px;height:13px;"></i>
+        <button onclick="editMistake('${m.id}')" title="تعديل" class="icon-btn">
+          <i data-lucide="pencil" class="ico-13"></i>
         </button>
-        <button onclick="deleteMistake('${m.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
-          <i data-lucide="trash-2" style="width:13px;height:13px;"></i>
+        <button onclick="deleteMistake('${m.id}')" title="حذف" class="icon-btn">
+          <i data-lucide="trash-2" class="ico-13"></i>
         </button>
       </div>
     </div>`;
@@ -2939,15 +3022,15 @@ function renderGradeModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:88vh; overflow-y:auto;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${existing ? "تعديل الدرجة" : "تسجيل درجة"}</div>
+      <div class="modal-title modal-title-tight">${existing ? "تعديل الدرجة" : "تسجيل درجة"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
 
       ${
         !precise
           ? `
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">عنوان الاختبار</label>
+      <label class="field-label">عنوان الاختبار</label>
       <input id="grade-title" class="field-input" placeholder="مثال: امتحان نصف الترم" style="margin-bottom:16px;">
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">المادة (اختياري)</label>
+      <label class="field-label field-label-lg">المادة (اختياري)</label>
       <div id="grade-subject-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
         <div class="cat-pill" data-selected="${!m.subjectId}" data-subj="" onclick="pickGradeSubject(null)">بدون مادة</div>
         ${state.subjects.map((s) => `<div class="cat-pill" data-selected="${m.subjectId === s.id}" data-subj="${s.id}" onclick="pickGradeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
@@ -2955,7 +3038,7 @@ function renderGradeModal(m) {
           : ""
       }
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">النوع</label>
+      <label class="field-label field-label-lg">النوع</label>
       <div id="grade-type-row" style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
         ${
           state.gradeTypes.length
@@ -2971,22 +3054,22 @@ function renderGradeModal(m) {
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
         <div>
-          <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">إجمالي الأسئلة</label>
+          <label class="field-label">إجمالي الأسئلة</label>
           <input id="grade-total" type="number" min="0" class="field-input" placeholder="مثال: 20" value="${existing ? existing.totalQuestions : ""}">
         </div>
         <div>
-          <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">عدد الغلط</label>
+          <label class="field-label">عدد الغلط</label>
           <input id="grade-wrong" type="number" min="0" class="field-input" placeholder="مثال: 4" value="${existingWrong}">
         </div>
       </div>
       <div style="font-size:11px; color:var(--faint); margin-bottom:18px;">هنحسب عدد الصح تلقائي من الفرق بينهم.</div>
 
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:8px;">تفاصيل إضافية <span style="color:var(--faint); font-weight:500;">(اختياري — زي الصعوبة أو نوع الأسئلة)</span></label>
+      <label class="field-label field-label-lg">تفاصيل إضافية <span style="color:var(--faint); font-weight:500;">(اختياري — زي الصعوبة أو نوع الأسئلة)</span></label>
       <div id="grade-breakdown-rows" style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px;">${initialBreakdownRowsHTML}</div>
       <button type="button" class="btn-ghost" onclick="addGradeBreakdownRow()" style="font-size:12.5px; padding:7px 14px; margin-bottom:8px;">+ إضافة تفصيل</button>
       <div style="font-size:11px; color:var(--faint); margin-bottom:20px;">اكتب اسم أي تقسيمة عايزها (سهل، متوسط، اختيار من متعدد...) وعدد أسئلتها وعدد الغلط فيها بس — هنحسب الصح تلقائي.</div>
 
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
         <button class="btn-primary" onclick="submitGrade('${m.subjectId || ""}','${m.folderId || ""}','${m.fileId || ""}')">حفظ</button>
       </div>
@@ -2997,10 +3080,10 @@ let gradeBreakdownRowSeq = 0;
 function gradeBreakdownRowHTML(idx, prefill) {
   prefill = prefill || {};
   return `
-  <div class="grade-bd-row" data-bd-idx="${idx}" style="display:flex; gap:8px; align-items:center;">
+  <div class="grade-bd-row" data-bd-idx="${idx}">
     <input id="grade-bd-label-${idx}" class="field-input" placeholder="مثال: سهل" value="${esc(prefill.label || "")}" style="flex:1.3; min-width:0;">
-    <input id="grade-bd-total-${idx}" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" value="${prefill.total != null ? prefill.total : ""}" style="flex:1; min-width:0;">
-    <input id="grade-bd-wrong-${idx}" type="number" min="0" class="field-input" placeholder="عدد الغلط" value="${prefill.wrong != null ? prefill.wrong : ""}" style="flex:1; min-width:0;">
+    <input id="grade-bd-total-${idx}" type="number" min="0" class="field-input" placeholder="عدد الأسئلة" value="${prefill.total != null ? prefill.total : ""}" class="grow">
+    <input id="grade-bd-wrong-${idx}" type="number" min="0" class="field-input" placeholder="عدد الغلط" value="${prefill.wrong != null ? prefill.wrong : ""}" class="grow">
     <button type="button" onclick="removeGradeBreakdownRow(${idx})" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px; flex-shrink:0; font-size:17px; line-height:1;">×</button>
   </div>`;
 }
@@ -3095,7 +3178,7 @@ function renderGradeTypesModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:400px; padding:22px;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:16px;">إدارة أنواع الدرجات</div>
+      <div class="modal-title">إدارة أنواع الدرجات</div>
       ${
         state.gradeTypes.length
           ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
@@ -3105,21 +3188,21 @@ function renderGradeTypesModal() {
           <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
             <span style="width:14px;height:14px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
             <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(t.name)}</span>
-            <button onclick="deleteGradeType('${t.id}')" title="حذف" style="background:none;border:none;color:var(--faint);cursor:pointer;padding:4px;">
-              <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
+            <button onclick="deleteGradeType('${t.id}')" title="حذف" class="icon-btn">
+              <i data-lucide="trash-2" class="ico-14"></i>
             </button>
           </div>`,
           )
           .join("")}
       </div>`
-          : `<div style="text-align:center; color:var(--faint); font-size:13px; padding:16px; border:1.5px dashed var(--border); border-radius:12px; margin-bottom:18px;">لسه معملتش أي نوع</div>`
+          : `<div class="empty-state compact" style="margin-bottom:18px;">لسه معملتش أي نوع</div>`
       }
-      <label style="font-size:12.5px; color:var(--muted); display:block; margin-bottom:6px;">نوع جديد</label>
+      <label class="field-label">نوع جديد</label>
       <div style="display:flex; gap:8px; margin-bottom:20px;">
         <input id="new-gtype-name" class="field-input" placeholder="مثال: كويز، واجب، امتحان..." style="flex:1;">
-        <input id="new-gtype-color" type="color" value="#5AA9E6" style="width:44px; height:40px; border:1px solid var(--border); border-radius:8px; padding:2px; cursor:pointer; background:none;">
+        <input id="new-gtype-color" type="color" value="#5AA9E6" class="color-input">
       </div>
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <div class="modal-actions">
         <button class="btn-ghost" onclick="closeModal()">تم</button>
         <button class="btn-primary" onclick="addGradeType()">إضافة</button>
       </div>
@@ -3321,19 +3404,19 @@ function renderTestsStatsCard(stats, opts) {
   const remaining = stats.totalFiles - stats.gradedCount;
   return `
     <div class="dash-card" style="padding:20px; margin-bottom:20px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <div class="row-between" style="margin-bottom:16px;">
         <div style="font-weight:800; font-size:15px;">${esc(opts.title || "الاختبارات")}</div>
         ${
           opts.showManageButtons
             ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button onclick="openModal({type:'grade-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-                  <i data-lucide="settings-2" style="width:13px;height:13px;"></i> أنواع الدرجات
+                <button onclick="openModal({type:'grade-types'})" class="btn-ghost btn-sm row">
+                  <i data-lucide="settings-2" class="ico-13"></i> أنواع الدرجات
                 </button>
-                <button onclick="openModal({type:'mistake-types'})" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:7px 12px; font-size:12.5px;">
-                  <i data-lucide="settings-2" style="width:13px;height:13px;"></i> أنواع الأخطاء
+                <button onclick="openModal({type:'mistake-types'})" class="btn-ghost btn-sm row">
+                  <i data-lucide="settings-2" class="ico-13"></i> أنواع الأخطاء
                 </button>
                 <button onclick="openModal({type:'grade'${opts.subjectId ? `, subjectId:'${opts.subjectId}'` : ""}})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-                  <i data-lucide="plus" style="width:15px;height:15px;"></i> درجة جديدة
+                  <i data-lucide="plus" class="ico-15"></i> درجة جديدة
                 </button>
               </div>`
             : ""
@@ -3353,12 +3436,12 @@ function renderTestsStatsCard(stats, opts) {
         </div>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:14px; padding-top:16px; border-top:1px solid var(--border-soft); margin-bottom:${stats.gradeTypes.length ? "18px" : "0"};">
-        <div><div style="color:var(--muted); font-size:12px;">إجمالي الملفات</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalFiles}</div></div>
-        <div><div style="color:var(--muted); font-size:12px;">إجمالي الأسئلة</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalQ}</div></div>
-        <div><div style="color:var(--muted); font-size:12px;">درجات مسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--success);">${stats.gradedCount}</div></div>
-        <div><div style="color:var(--muted); font-size:12px;">لسه من غير درجة</div><div class="mono" style="font-size:19px; font-weight:600; color:${remaining ? "var(--warning)" : "var(--faint)"};">${remaining}</div></div>
-        <div><div style="color:var(--muted); font-size:12px;">إجمالي الغلط</div><div class="mono" style="font-size:19px; font-weight:600; color:#F2795B;">${stats.totalW}</div></div>
-        <div><div style="color:var(--muted); font-size:12px;">إجمالي الأخطاء المسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--warning);">${stats.mistakesTotal}</div></div>
+        <div><div class="t-muted-sm">إجمالي الملفات</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalFiles}</div></div>
+        <div><div class="t-muted-sm">إجمالي الأسئلة</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalQ}</div></div>
+        <div><div class="t-muted-sm">درجات مسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--success);">${stats.gradedCount}</div></div>
+        <div><div class="t-muted-sm">لسه من غير درجة</div><div class="mono" style="font-size:19px; font-weight:600; color:${remaining ? "var(--warning)" : "var(--faint)"};">${remaining}</div></div>
+        <div><div class="t-muted-sm">إجمالي الغلط</div><div class="mono" style="font-size:19px; font-weight:600; color:#F2795B;">${stats.totalW}</div></div>
+        <div><div class="t-muted-sm">إجمالي الأخطاء المسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--warning);">${stats.mistakesTotal}</div></div>
       </div>
       ${
         stats.gradeTypes.length
@@ -3372,7 +3455,7 @@ function renderTestsStatsCard(stats, opts) {
                 <span style="width:9px;height:9px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
                 ${esc(t.name)}
               </span>
-              <span class="mono" style="font-size:12px; color:var(--muted);">${t.count} · ${t.pct}%</span>
+              <span class="mono t-muted-sm">${t.count} · ${t.pct}%</span>
             </div>
             <div class="mini-bar"><div style="width:${t.pct}%; background:${t.color};"></div></div>
           </div>`,
@@ -3406,7 +3489,7 @@ function renderTestsSubjectPage(subj) {
   const crumb = `
     <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted); margin-bottom:14px; flex-wrap:wrap;">
       <span style="cursor:pointer; color:var(--accent); font-weight:600;" onclick="openTestsSubject(null)">كل المواد</span>
-      <i data-lucide="chevron-left" style="width:12px;height:12px;"></i>
+      <i data-lucide="chevron-left" class="ico-12"></i>
       <span style="font-weight:700;">${esc(subj.name)}</span>
     </div>`;
   const stats = testFilesStats(subjectTestItems(subj));
@@ -3476,8 +3559,8 @@ function renderTestsFileRow(subj, folder, f) {
         ${categoryBadgeHTML(f.category, subj)}
       </div>
       <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
-        ${grade ? `<span class="mono" style="font-size:12px; font-weight:700; padding:3px 9px; border-radius:20px; background:${pct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${pct >= 50 ? "var(--success)" : "#F2795B"};">${grade.correctCount}/${grade.totalQuestions} · ${pct}%</span>` : `<span style="font-size:11.5px; color:var(--faint);">بدون درجة</span>`}
-        ${mistakes.length ? `<span style="display:flex; align-items:center; gap:3px; color:var(--warning); font-size:12px; font-weight:600;"><i data-lucide="alert-triangle" style="width:12px;height:12px;"></i>${mistakes.length}</span>` : ""}
+        ${grade ? `<span class="mono" style="font-size:12px; font-weight:700; padding:3px 9px; border-radius:20px; background:${pct >= 50 ? "var(--success-soft)" : "rgba(242,121,91,0.14)"}; color:${pct >= 50 ? "var(--success)" : "#F2795B"};">${grade.correctCount}/${grade.totalQuestions} · ${pct}%</span>` : `<span class="t-faint-sm">بدون درجة</span>`}
+        ${mistakes.length ? `<span style="display:flex; align-items:center; gap:3px; color:var(--warning); font-size:12px; font-weight:600;"><i data-lucide="alert-triangle" class="ico-12"></i>${mistakes.length}</span>` : ""}
         <i data-lucide="${isOpen ? "chevron-up" : "chevron-down"}" style="width:15px;height:15px; color:var(--faint);"></i>
       </div>
     </div>
@@ -3507,17 +3590,17 @@ function renderTestsFileDetail(subj, folder, f, grade, mistakes) {
     }
     <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
       <button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px;" onclick="openModal({type:'grade', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})">
-        <i data-lucide="clipboard-check" style="width:12px;height:12px;"></i> ${grade ? "تعديل الدرجة" : "تسجيل الدرجة"}
+        <i data-lucide="clipboard-check" class="ico-12"></i> ${grade ? "تعديل الدرجة" : "تسجيل الدرجة"}
       </button>
       ${
         grade
           ? `<button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px; color:#F2795B;" onclick="deleteGrade('${grade.id}')">
-              <i data-lucide="trash-2" style="width:12px;height:12px;"></i> حذف الدرجة
+              <i data-lucide="trash-2" class="ico-12"></i> حذف الدرجة
             </button>`
           : ""
       }
       <button class="btn-ghost" style="font-size:12px; padding:7px 12px; display:flex; align-items:center; gap:5px;" onclick="openModal({type:'mistake', subjectId:'${subj.id}', folderId:'${folder.id}', fileId:'${f.id}'})">
-        <i data-lucide="plus" style="width:12px;height:12px;"></i> إضافة خطأ
+        <i data-lucide="plus" class="ico-12"></i> إضافة خطأ
       </button>
     </div>
   </div>`;
@@ -3539,7 +3622,7 @@ function renderImportModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:14px;">استيراد ملف كمهمة</div>
+      <div class="modal-title" style="margin-bottom:14px;">استيراد ملف كمهمة</div>
       <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px;">
         ${
           !hasAnyFiles
@@ -3586,7 +3669,7 @@ function renderImportFolders(subj, folders, depth) {
             <span style="font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.title)}</span>
             ${
               already
-                ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px; flex-shrink:0;"><i data-lucide="check" style="width:12px;height:12px;"></i> مستوردة</span>`
+                ? `<span style="font-size:11px; color:var(--success); display:flex; align-items:center; gap:3px; flex-shrink:0;"><i data-lucide="check" class="ico-12"></i> مستوردة</span>`
                 : `<button onclick="importTask('${subj.id}','${folder.id}','${f.id}')" style="background:var(--accent-soft); color:var(--accent); border:none; border-radius:8px; padding:4px 10px; font-size:11.5px; font-weight:700; cursor:pointer; flex-shrink:0;">+ استيراد</button>`
             }
           </div>`;
@@ -3662,7 +3745,7 @@ function renderMoveModal(m) {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:440px; padding:22px; max-height:82vh; display:flex; flex-direction:column;">
-      <div style="font-weight:800; font-size:16px; margin-bottom:4px;">${isMulti ? "نقل العناصر المحددة" : isFolder ? "نقل الفولدر" : "نقل الملف"}</div>
+      <div class="modal-title modal-title-tight">${isMulti ? "نقل العناصر المحددة" : isFolder ? "نقل الفولدر" : "نقل الملف"}</div>
       <div style="color:var(--muted); font-size:12.5px; margin-bottom:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(itemLabel)}</div>
       <div style="overflow-y:auto; flex:1; margin:-4px; padding:4px;">
         ${state.subjects
