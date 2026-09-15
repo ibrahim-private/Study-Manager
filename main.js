@@ -34,19 +34,6 @@ function getMistakeTypeName(id) {
   const t = (state.mistakeTypes || []).find((x) => x.id === id);
   return t ? t.name : "بدون نوع";
 }
-const DEFAULT_GRADE_TYPES = [
-  { id: "gt-quiz", name: "كويز", color: "#5AA9E6" },
-  { id: "gt-hw", name: "واجب", color: "#F2795B" },
-  { id: "gt-exam", name: "امتحان", color: "#EF4444" },
-];
-function getGradeTypeColor(id) {
-  const t = (state.gradeTypes || []).find((x) => x.id === id);
-  return t ? t.color : "var(--accent)";
-}
-function getGradeTypeName(id) {
-  const t = (state.gradeTypes || []).find((x) => x.id === id);
-  return t ? t.name : "بدون نوع";
-}
 const REVIEW_INTERVALS_DAYS = [1, 21, 30]; // بعد يوم، بعد 3 أسابيع، بعد شهر
 const REVIEW_STAGE_LABELS = ["مراجعة أولى", "مراجعة تانية", "مراجعة أخيرة"];
 const SUBJECT_PALETTE = ["#6D5EF0", "#35D0A0", "#F2795B", "#5AA9E6", "#F5A623", "#B98BF0", "#EC7BB0", "#4FD1C5"];
@@ -80,8 +67,7 @@ let state = {
   categories: [], // {id, name, color, isTest, countsInOverall} — user-defined file categories
   mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
   mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
-  grades: [], // {id, typeId, title, totalQuestions, correctCount, breakdown:[{label,total,correct}], subjectId, folderId, fileId, createdAt} — one per file max, edited in place afterwards
-  gradeTypes: [], // {id, name, color} — user-defined grade/exam types (quiz, homework, exam...)
+  grades: [], // {id, title, totalQuestions, correctCount, breakdown:[{label,total,correct}], subjectId, folderId, fileId, createdAt} — one per file max, edited in place afterwards
   // --- قسم الاختبارات (tests section) — mirrors the real file/folder tree, filtered to isTest files ---
   testsSubjectId: null, // which subject's tests page is open (null = subjects overview)
   testsCollapsedFolders: {}, // folderId -> true when the user has collapsed that section of the tree (default: expanded)
@@ -120,7 +106,6 @@ function seedData() {
     categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
     mistakeTypes: DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t })),
     mistakes: [],
-    gradeTypes: DEFAULT_GRADE_TYPES.map((t) => ({ ...t })),
     grades: [],
   };
 }
@@ -159,8 +144,6 @@ async function loadDataForUser(uid) {
           ? data.mistakeTypes
           : DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
       state.mistakes = data.mistakes || [];
-      state.gradeTypes =
-        data.gradeTypes && data.gradeTypes.length ? data.gradeTypes : DEFAULT_GRADE_TYPES.map((t) => ({ ...t }));
       state.grades = data.grades || [];
     } else {
       const seed = seedData();
@@ -171,7 +154,6 @@ async function loadDataForUser(uid) {
       state.categories = seed.categories;
       state.mistakeTypes = seed.mistakeTypes;
       state.mistakes = seed.mistakes;
-      state.gradeTypes = seed.gradeTypes;
       state.grades = seed.grades;
       await docRef.set({
         subjects: state.subjects,
@@ -181,7 +163,6 @@ async function loadDataForUser(uid) {
         categories: state.categories,
         mistakeTypes: state.mistakeTypes,
         mistakes: state.mistakes,
-        gradeTypes: state.gradeTypes,
         grades: state.grades,
       });
     }
@@ -194,7 +175,6 @@ async function loadDataForUser(uid) {
     state.categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }));
     state.mistakeTypes = DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
     state.mistakes = [];
-    state.gradeTypes = DEFAULT_GRADE_TYPES.map((t) => ({ ...t }));
     state.grades = [];
   }
   state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
@@ -213,7 +193,6 @@ function saveData() {
     categories: state.categories,
     mistakeTypes: state.mistakeTypes,
     mistakes: state.mistakes,
-    gradeTypes: state.gradeTypes,
     grades: state.grades,
   };
   clearTimeout(saveTimer);
@@ -1245,7 +1224,6 @@ function exportBackup() {
     categories: state.categories || [],
     mistakeTypes: state.mistakeTypes || [],
     mistakes: state.mistakes || [],
-    gradeTypes: state.gradeTypes || [],
     grades: state.grades || [],
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1290,8 +1268,6 @@ function handleImportBackup(input) {
           ? data.mistakeTypes
           : DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
       state.mistakes = data.mistakes || [];
-      state.gradeTypes =
-        data.gradeTypes && data.gradeTypes.length ? data.gradeTypes : DEFAULT_GRADE_TYPES.map((t) => ({ ...t }));
       state.grades = data.grades || [];
       state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
       state.folderPath = [];
@@ -2361,7 +2337,6 @@ function renderModal() {
   if (m.type === "mistake") return renderMistakeModal(m);
   if (m.type === "mistake-types") return renderMistakeTypesModal();
   if (m.type === "grade") return renderGradeModal(m);
-  if (m.type === "grade-types") return renderGradeTypesModal();
   if (m.type === "note") return renderNoteModal(m);
   if (m.type === "platform") return renderPlatformModal(m);
   if (m.type === "platform-edit") return renderPlatformModal(m);
@@ -2982,30 +2957,14 @@ function renderMistakeRow(m) {
    Lives as a card on the Home dashboard (no dedicated tab, per product decision) —
    collapsed shows the weighted overall average + a per-type breakdown; "عرض التفاصيل"
    expands an in-card drill-down: subject list -> that subject's individual entries. */
-let pickedGradeType = null;
-let pickedGradeSubject = null;
-function pickGradeType(id) {
-  pickedGradeType = id;
-  document
-    .querySelectorAll("#grade-type-row .cat-pill")
-    .forEach((el) => el.setAttribute("data-selected", el.getAttribute("data-type") === id ? "true" : "false"));
-}
-function pickGradeSubject(id) {
-  pickedGradeSubject = id;
-  document.querySelectorAll("#grade-subject-row .cat-pill").forEach((el) => {
-    const v = el.getAttribute("data-subj") || null;
-    el.setAttribute("data-selected", v === id ? "true" : "false");
-  });
-}
 function renderGradeModal(m) {
   const subj = m.subjectId ? getSubject(m.subjectId) : null;
   const folder = subj && m.folderId ? getFolder(subj, m.folderId) : null;
   const file = folder && m.fileId ? getFile(folder, m.fileId) : null;
-  const precise = !!file;
-  const existing = precise ? gradeForFile(m.fileId) : null;
-  const contextLabel = [subj && subj.name, folder && folder.name, file && file.title].filter(Boolean).join(" / ");
-  pickedGradeType = existing ? existing.typeId : state.gradeTypes[0] ? state.gradeTypes[0].id : null;
-  pickedGradeSubject = m.subjectId || null;
+  if (!file) return "";
+  const existing = gradeForFile(m.fileId);
+  const contextLabel = [subj && subj.name, folder && folder.name, file.title].filter(Boolean).join(" / ");
+  const catColor = getCategoryColor(file.category);
   gradeBreakdownRowSeq = 0;
   let initialBreakdownRowsHTML = "";
   if (existing) {
@@ -3023,33 +2982,16 @@ function renderGradeModal(m) {
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:460px; padding:22px; max-height:88vh; overflow-y:auto;">
       <div class="modal-title modal-title-tight">${existing ? "تعديل الدرجة" : "تسجيل درجة"}</div>
-      <div style="color:var(--muted); font-size:12.5px; margin-bottom:16px; min-height:14px;">${esc(contextLabel)}</div>
+      <div class="modal-subtitle">${esc(contextLabel)}</div>
 
-      ${
-        !precise
-          ? `
-      <label class="field-label">عنوان الاختبار</label>
-      <input id="grade-title" class="field-input" placeholder="مثال: امتحان نصف الترم" style="margin-bottom:16px;">
-      <label class="field-label field-label-lg">المادة (اختياري)</label>
-      <div id="grade-subject-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
-        <div class="cat-pill" data-selected="${!m.subjectId}" data-subj="" onclick="pickGradeSubject(null)">بدون مادة</div>
-        ${state.subjects.map((s) => `<div class="cat-pill" data-selected="${m.subjectId === s.id}" data-subj="${s.id}" onclick="pickGradeSubject('${s.id}')">${esc(s.name)}</div>`).join("")}
-      </div>`
-          : ""
-      }
-
-      <label class="field-label field-label-lg">النوع</label>
-      <div id="grade-type-row" style="display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap;">
+      <div class="row-8" style="margin-bottom:18px;">
+        <span class="t-muted-sm">النوع:</span>
         ${
-          state.gradeTypes.length
-            ? state.gradeTypes
-                .map(
-                  (t) =>
-                    `<div class="cat-pill" data-selected="${pickedGradeType === t.id}" data-type="${t.id}" onclick="pickGradeType('${t.id}')">${esc(t.name)}</div>`,
-                )
-                .join("")
-            : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي نوع — أضف واحد من "أنواع الدرجات" في قسم الاختبارات</div>`
+          file.category
+            ? `<span class="badge" style="background:${catColor}22; color:${catColor};">${esc(file.category)}</span>`
+            : `<span class="t-faint-sm">الملف من غير تصنيف</span>`
         }
+        <span class="field-hint">— بيتاخد من تصنيف الملف</span>
       </div>
 
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
@@ -3098,29 +3040,13 @@ function removeGradeBreakdownRow(idx) {
   if (row) row.remove();
 }
 function submitGrade(subjectId, folderId, fileId) {
-  if (!pickedGradeType) {
-    alert('اختار نوع الدرجة الأول (لو مفيش أنواع، ضيف واحد من "أنواع الدرجات" في قسم الاختبارات)');
-    return;
-  }
-  let title = "";
-  let finalSubjectId = subjectId || null;
-  let existing = null;
-  if (fileId) {
-    const subj = getSubject(subjectId);
-    const folder = subj ? getFolder(subj, folderId) : null;
-    const file = folder ? getFile(folder, fileId) : null;
-    title = file ? file.title : "";
-    existing = gradeForFile(fileId);
-  } else {
-    const titleEl = document.getElementById("grade-title");
-    title = titleEl ? titleEl.value.trim() : "";
-    finalSubjectId = pickedGradeSubject || null;
-    if (!title) {
-      if (titleEl) titleEl.focus();
-      alert("اكتب عنوان للاختبار");
-      return;
-    }
-  }
+  if (!fileId) return;
+  const subj = getSubject(subjectId);
+  const folder = subj ? getFolder(subj, folderId) : null;
+  const file = folder ? getFile(folder, fileId) : null;
+  if (!file) return;
+  const title = file.title;
+  const existing = gradeForFile(fileId);
   const totalQuestions = parseInt((document.getElementById("grade-total") || {}).value, 10) || 0;
   const wrongCount = parseInt((document.getElementById("grade-wrong") || {}).value, 10) || 0;
   if (!totalQuestions) {
@@ -3142,25 +3068,23 @@ function submitGrade(subjectId, folderId, fileId) {
     if (total > 0) breakdown.push({ label, total, correct: Math.max(0, total - Math.min(wrong, total)) });
   });
   if (existing) {
-    existing.typeId = pickedGradeType;
     existing.title = title;
     existing.totalQuestions = totalQuestions;
     existing.correctCount = correctCount;
     existing.breakdown = breakdown;
-    existing.subjectId = finalSubjectId;
-    existing.folderId = fileId ? folderId || null : null;
+    existing.subjectId = subjectId || null;
+    existing.folderId = folderId || null;
     existing.updatedAt = new Date().toISOString();
   } else {
     state.grades.push({
       id: uid(),
-      typeId: pickedGradeType,
       title,
       totalQuestions,
       correctCount,
       breakdown,
-      subjectId: finalSubjectId,
-      folderId: fileId ? folderId || null : null,
-      fileId: fileId || null,
+      subjectId: subjectId || null,
+      folderId: folderId || null,
+      fileId,
       createdAt: new Date().toISOString(),
     });
   }
@@ -3171,66 +3095,6 @@ function submitGrade(subjectId, folderId, fileId) {
 function deleteGrade(id) {
   if (!confirm("حذف الدرجة دي من السجل؟")) return;
   state.grades = state.grades.filter((g) => g.id !== id);
-  saveData();
-  render();
-}
-function renderGradeTypesModal() {
-  return `
-  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
-    <div class="modal-card dash-card" style="width:400px; padding:22px;">
-      <div class="modal-title">إدارة أنواع الدرجات</div>
-      ${
-        state.gradeTypes.length
-          ? `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px;">
-        ${state.gradeTypes
-          .map(
-            (t) => `
-          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:10px;">
-            <span style="width:14px;height:14px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
-            <span style="flex:1; font-size:13.5px; font-weight:600;">${esc(t.name)}</span>
-            <button onclick="deleteGradeType('${t.id}')" title="حذف" class="icon-btn">
-              <i data-lucide="trash-2" class="ico-14"></i>
-            </button>
-          </div>`,
-          )
-          .join("")}
-      </div>`
-          : `<div class="empty-state compact" style="margin-bottom:18px;">لسه معملتش أي نوع</div>`
-      }
-      <label class="field-label">نوع جديد</label>
-      <div style="display:flex; gap:8px; margin-bottom:20px;">
-        <input id="new-gtype-name" class="field-input" placeholder="مثال: كويز، واجب، امتحان..." style="flex:1;">
-        <input id="new-gtype-color" type="color" value="#5AA9E6" class="color-input">
-      </div>
-      <div class="modal-actions">
-        <button class="btn-ghost" onclick="closeModal()">تم</button>
-        <button class="btn-primary" onclick="addGradeType()">إضافة</button>
-      </div>
-    </div>
-  </div>`;
-}
-function addGradeType() {
-  const nameInput = document.getElementById("new-gtype-name");
-  const colorInput = document.getElementById("new-gtype-color");
-  const name = nameInput.value.trim();
-  if (!name) {
-    nameInput.focus();
-    return;
-  }
-  if (state.gradeTypes.some((t) => t.name === name)) {
-    nameInput.focus();
-    return;
-  }
-  state.gradeTypes.push({ id: uid(), name, color: colorInput.value });
-  nameInput.value = "";
-  saveData();
-  render();
-}
-function deleteGradeType(id) {
-  const t = state.gradeTypes.find((x) => x.id === id);
-  if (!t) return;
-  if (!confirm(`حذف نوع "${t.name}"؟ الدرجات المسجلة بيه هتفضل موجودة بس من غير تصنيف واضح.`)) return;
-  state.gradeTypes = state.gradeTypes.filter((x) => x.id !== id);
   saveData();
   render();
 }
@@ -3281,36 +3145,33 @@ function testFilesStats(items) {
     gradedCount = 0,
     mistakesTotal = 0;
   const mistakeTypeCounts = {};
-  const gradeTypeAgg = {};
+  // grades are broken down by the FILE's category (واجب / كويز / ...) — there is no separate
+  // "grade type" concept any more; the file's own category is the type.
+  const catAgg = {};
   items.forEach((it) => {
     const g = gradeForFile(it.fileId);
     if (g) {
       gradedCount++;
       totalQ += g.totalQuestions || 0;
       totalC += g.correctCount || 0;
-      const tk = g.typeId || "none";
-      if (!gradeTypeAgg[tk]) gradeTypeAgg[tk] = { totalQ: 0, totalC: 0, count: 0 };
-      gradeTypeAgg[tk].totalQ += g.totalQuestions || 0;
-      gradeTypeAgg[tk].totalC += g.correctCount || 0;
-      gradeTypeAgg[tk].count += 1;
+      const key = it.file.category || "بدون تصنيف";
+      if (!catAgg[key]) catAgg[key] = { totalQ: 0, totalC: 0, count: 0 };
+      catAgg[key].totalQ += g.totalQuestions || 0;
+      catAgg[key].totalC += g.correctCount || 0;
+      catAgg[key].count += 1;
     }
     const ms = mistakesForFile(it.fileId);
     mistakesTotal += ms.length;
     ms.forEach((m) => mistakeTypeIdsOf(m).forEach((id) => (mistakeTypeCounts[id] = (mistakeTypeCounts[id] || 0) + 1)));
   });
-  const gradeTypes = state.gradeTypes
-    .map((t) => {
-      const agg = gradeTypeAgg[t.id];
-      if (!agg) return null;
-      return {
-        id: t.id,
-        name: t.name,
-        color: t.color,
-        count: agg.count,
-        pct: agg.totalQ ? Math.round((agg.totalC / agg.totalQ) * 100) : 0,
-      };
-    })
-    .filter(Boolean);
+  const categories = Object.keys(catAgg)
+    .map((name) => ({
+      name,
+      color: getCategoryColor(name),
+      count: catAgg[name].count,
+      pct: catAgg[name].totalQ ? Math.round((catAgg[name].totalC / catAgg[name].totalQ) * 100) : 0,
+    }))
+    .sort((a, b) => b.count - a.count);
   const mistakeTypes = state.mistakeTypes
     .map((t) => ({ id: t.id, name: t.name, color: t.color, count: mistakeTypeCounts[t.id] || 0 }))
     .filter((t) => t.count > 0);
@@ -3323,7 +3184,7 @@ function testFilesStats(items) {
     pct: totalQ ? Math.round((totalC / totalQ) * 100) : 0,
     mistakesTotal,
     mistakeTypes,
-    gradeTypes,
+    categories,
   };
 }
 function openTestsSubject(id) {
@@ -3408,25 +3269,15 @@ function renderTestsStatsCard(stats, opts) {
         <div style="font-weight:800; font-size:15px;">${esc(opts.title || "الاختبارات")}</div>
         ${
           opts.showManageButtons
-            ? `<div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button onclick="openModal({type:'grade-types'})" class="btn-ghost btn-sm row">
-                  <i data-lucide="settings-2" class="ico-13"></i> أنواع الدرجات
-                </button>
-                <button onclick="openModal({type:'mistake-types'})" class="btn-ghost btn-sm row">
-                  <i data-lucide="settings-2" class="ico-13"></i> أنواع الأخطاء
-                </button>
-                <button onclick="openModal({type:'grade'${opts.subjectId ? `, subjectId:'${opts.subjectId}'` : ""}})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
-                  <i data-lucide="plus" class="ico-15"></i> درجة جديدة
-                </button>
-              </div>`
+            ? `<button onclick="openModal({type:'mistake-types'})" class="btn-ghost btn-sm row">
+                 <i data-lucide="settings-2" class="ico-13"></i> أنواع الأخطاء
+               </button>`
             : ""
         }
       </div>
       ${
         stats.totalFiles === 0
-          ? `<div style="text-align:center; color:var(--faint); padding:40px 20px; border:1.5px dashed var(--border); border-radius:12px;">
-              <div style="font-size:13.5px;">لسه مفيش ملفات معلّمة كـ"تصنيف اختبار" — فعّلها من "إدارة التصنيفات" في الرئيسية وهتظهر هنا تلقائي</div>
-            </div>`
+          ? `<div class="empty-state">لسه مفيش ملفات معلّمة كـ"تصنيف اختبار" — فعّلها من "إدارة التصنيفات" في الرئيسية وهتظهر هنا تلقائي</div>`
           : `
       <div style="display:flex; align-items:center; gap:16px; margin-bottom:18px;">
         ${ringHTML(stats.pct, "var(--accent)", 80, 8)}
@@ -3435,7 +3286,7 @@ function renderTestsStatsCard(stats, opts) {
           <div style="font-size:24px; font-weight:800;">${stats.pct}%</div>
         </div>
       </div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:14px; padding-top:16px; border-top:1px solid var(--border-soft); margin-bottom:${stats.gradeTypes.length ? "18px" : "0"};">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(110px, 1fr)); gap:14px; padding-top:16px; border-top:1px solid var(--border-soft); margin-bottom:${stats.categories.length ? "18px" : "0"};">
         <div><div class="t-muted-sm">إجمالي الملفات</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalFiles}</div></div>
         <div><div class="t-muted-sm">إجمالي الأسئلة</div><div class="mono" style="font-size:19px; font-weight:600;">${stats.totalQ}</div></div>
         <div><div class="t-muted-sm">درجات مسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--success);">${stats.gradedCount}</div></div>
@@ -3444,20 +3295,20 @@ function renderTestsStatsCard(stats, opts) {
         <div><div class="t-muted-sm">إجمالي الأخطاء المسجلة</div><div class="mono" style="font-size:19px; font-weight:600; color:var(--warning);">${stats.mistakesTotal}</div></div>
       </div>
       ${
-        stats.gradeTypes.length
+        stats.categories.length
           ? `<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding-top:16px; border-top:1px solid var(--border-soft);">
-        ${stats.gradeTypes
+        ${stats.categories
           .map(
-            (t) => `
+            (c) => `
           <div>
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
               <span style="font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px;">
-                <span style="width:9px;height:9px;border-radius:50%;background:${t.color}; flex-shrink:0;"></span>
-                ${esc(t.name)}
+                <span style="width:9px;height:9px;border-radius:50%;background:${c.color}; flex-shrink:0;"></span>
+                ${esc(c.name)}
               </span>
-              <span class="mono t-muted-sm">${t.count} · ${t.pct}%</span>
+              <span class="mono t-muted-sm">${c.count} · ${c.pct}%</span>
             </div>
-            <div class="mini-bar"><div style="width:${t.pct}%; background:${t.color};"></div></div>
+            <div class="mini-bar"><div style="width:${c.pct}%; background:${c.color};"></div></div>
           </div>`,
           )
           .join("")}
@@ -3496,7 +3347,6 @@ function renderTestsSubjectPage(subj) {
   const header = renderTestsStatsCard(stats, {
     title: subj.name + " — نظرة عامة",
     showManageButtons: true,
-    subjectId: subj.id,
   });
   return crumb + header + renderTestsMistakeDistribution(stats) + renderTestsSubjectTree(subj);
 }
