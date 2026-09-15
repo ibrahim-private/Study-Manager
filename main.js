@@ -2254,6 +2254,105 @@ function renderFileRow(subj, folder, f) {
 }
 
 /* ---------------- HISTORY VIEW (what got done, grouped by day) ---------------- */
+function dateStrToDate(s) {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+function dateObjToStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function historyStats() {
+  const history = state.history || [];
+  if (!history.length) return null;
+  const dateSet = new Set(history.map((h) => h.date));
+  const dates = [...dateSet].sort();
+  const firstDate = dates[0];
+  const today = todayStr();
+  const daysSinceStart = Math.round((dateStrToDate(today) - dateStrToDate(firstDate)) / 86400000) + 1;
+  const activeDays = dates.length;
+  const emptyDays = Math.max(0, daysSinceStart - activeDays);
+  const consistencyPct = daysSinceStart ? Math.round((activeDays / daysSinceStart) * 100) : 0;
+
+  // longest run of back-to-back active days
+  let bestStreak = 1,
+    run = 1;
+  for (let i = 1; i < dates.length; i++) {
+    const gap = Math.round((dateStrToDate(dates[i]) - dateStrToDate(dates[i - 1])) / 86400000);
+    run = gap === 1 ? run + 1 : 1;
+    if (run > bestStreak) bestStreak = run;
+  }
+  // current run, counted backward from today (still counts if today just hasn't happened yet but yesterday did)
+  let currentStreak = 0;
+  let cursor = dateSet.has(today)
+    ? dateStrToDate(today)
+    : (() => {
+        const y = dateStrToDate(today);
+        y.setDate(y.getDate() - 1);
+        return y;
+      })();
+  while (dateSet.has(dateObjToStr(cursor))) {
+    currentStreak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return {
+    firstDate,
+    daysSinceStart,
+    activeDays,
+    emptyDays,
+    consistencyPct,
+    totalTasks: history.length,
+    bestStreak,
+    currentStreak,
+  };
+}
+function renderHistoryStatsCard(stats) {
+  return `
+    <div class="dash-card" style="padding:20px;">
+      <div style="font-weight:800; font-size:15px; margin-bottom:16px;">إحصائيات السجل</div>
+      <div style="display:flex; align-items:center; gap:16px; margin-bottom:18px;">
+        ${ringHTML(stats.consistencyPct, "var(--accent)", 80, 8)}
+        <div>
+          <div class="t-muted" style="margin-bottom:2px;">نسبة الالتزام</div>
+          <div style="font-size:24px; font-weight:800;">${stats.consistencyPct}%</div>
+          <div class="t-faint-sm" style="margin-top:2px;">من أول يوم عملت فيه مهمة لحد النهارده</div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr)); gap:14px; padding-top:16px; border-top:1px solid var(--border-soft);">
+        <div>
+          <div class="t-muted-sm">بدأت يوم</div>
+          <div style="font-size:15px; font-weight:700; margin-top:2px;">${esc(formatDateLabel(stats.firstDate))}</div>
+        </div>
+        <div>
+          <div class="t-muted-sm">بقالك</div>
+          <div class="mono" style="font-size:19px; font-weight:600;">${stats.daysSinceStart} <span style="font-size:12px; font-weight:500; color:var(--muted);">يوم</span></div>
+        </div>
+        <div>
+          <div class="t-muted-sm">أيام فيها مهام</div>
+          <div class="mono" style="font-size:19px; font-weight:600; color:var(--success);">${stats.activeDays}</div>
+        </div>
+        <div>
+          <div class="t-muted-sm">أيام فاضية</div>
+          <div class="mono" style="font-size:19px; font-weight:600; color:${stats.emptyDays ? "var(--warning)" : "var(--faint)"};">${stats.emptyDays}</div>
+        </div>
+        <div>
+          <div class="t-muted-sm">إجمالي المهام المنجزة</div>
+          <div class="mono" style="font-size:19px; font-weight:600;">${stats.totalTasks}</div>
+        </div>
+        <div>
+          <div class="t-muted-sm">أطول سلسلة متواصلة</div>
+          <div class="mono" style="font-size:19px; font-weight:600;">${stats.bestStreak} <span style="font-size:12px; font-weight:500; color:var(--muted);">يوم</span></div>
+        </div>
+      </div>
+      ${
+        stats.currentStreak > 1
+          ? `<div class="row-8" style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border-soft); color:var(--warning); font-weight:700; font-size:13px;">
+              <i data-lucide="flame" class="ico-16"></i> شغال بقالك ${stats.currentStreak} يوم على التوالي — كمّل كده
+            </div>`
+          : ""
+      }
+    </div>`;
+}
 function renderHistory() {
   const history = state.history || [];
   if (history.length === 0) {
@@ -2268,8 +2367,10 @@ function renderHistory() {
     (groups[h.date] = groups[h.date] || []).push(h);
   });
   const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+  const stats = historyStats();
   return `
     <div style="display:flex; flex-direction:column; gap:14px;">
+      ${stats ? renderHistoryStatsCard(stats) : ""}
       ${dates
         .map((date) => {
           const entries = groups[date].slice().sort((a, b) => (b.time || "").localeCompare(a.time || ""));
