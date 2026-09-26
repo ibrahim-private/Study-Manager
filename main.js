@@ -64,6 +64,7 @@ let state = {
   modal: null,
   loaded: false,
   taskFilter: "all", // 'all' | 'pending' | 'done'
+  missingExpandedSubjects: {}, // subjectId -> bool, for the "الناقص عليك" accordion (session-only, not saved)
   categories: [], // {id, name, color, isTest, countsInOverall} — user-defined file categories
   mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
   mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
@@ -435,6 +436,72 @@ function taskStats() {
     }
   });
   return { total, done, remaining: total - done, pct: total ? Math.round((done / total) * 100) : 0 };
+}
+
+/* ---------------- "الناقص عليك" — everything not done yet, read-only view over the real library ---------------- */
+// Unlike state.tasks (files the student has manually chosen to work on), this needs no picking:
+// it's derived straight from the subject/folder tree, same exclusion rule as overallStats().
+function missingFilesBySubject() {
+  const excludedNames = new Set(state.categories.filter((c) => c.countsInOverall === false).map((c) => c.name));
+  const taskKey = (subjectId, folderId, fileId) => `${subjectId}|${folderId}|${fileId}`;
+  const taskKeys = new Set(state.tasks.map((t) => taskKey(t.subjectId, t.folderId, t.fileId)));
+  return state.subjects
+    .map((subj) => {
+      const items = subjectAllFilesWithFolder(subj)
+        .filter(({ file }) => !file.done && !(file.category && excludedNames.has(file.category)))
+        .map(({ folder, file }) => ({ folder, file, inTasks: taskKeys.has(taskKey(subj.id, folder.id, file.id)) }));
+      return { subject: subj, items };
+    })
+    .filter((g) => g.items.length > 0);
+}
+function toggleMissingSubject(subjectId) {
+  state.missingExpandedSubjects[subjectId] = !state.missingExpandedSubjects[subjectId];
+  render();
+}
+function missingFileRowHTML(subj, it) {
+  const { folder, file, inTasks } = it;
+  return `
+  <div class="import-row" style="border:1px solid var(--border-soft);">
+    <div class="grow truncate" style="font-size:13px;">${esc(file.title)} <span class="t-faint-sm">${esc(folder.name)}</span></div>
+    ${
+      inTasks
+        ? `<span class="t-faint-sm row" style="gap:4px; flex-shrink:0;"><i data-lucide="check" class="ico-12"></i> في مهامي</span>`
+        : `<button class="btn-ghost btn-xs" style="flex-shrink:0;" onclick="importTask('${subj.id}','${folder.id}','${file.id}')">أضف لمهامي</button>`
+    }
+  </div>`;
+}
+function missingSubjectGroupHTML(g) {
+  const expanded = !!state.missingExpandedSubjects[g.subject.id];
+  return `
+  <div style="border:1px solid var(--border-soft); border-radius:11px; margin-bottom:8px; overflow:hidden;">
+    <div onclick="toggleMissingSubject('${g.subject.id}')" style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; cursor:pointer;">
+      <div class="row-8">
+        <span style="width:9px;height:9px;border-radius:50%;background:${esc(g.subject.color)}; flex-shrink:0;"></span>
+        <span style="font-weight:700; font-size:13.5px;">${esc(g.subject.name)}</span>
+      </div>
+      <div class="row-8">
+        <span class="mono t-faint-sm">${g.items.length}</span>
+        <i data-lucide="${expanded ? "chevron-up" : "chevron-down"}" class="ico-14" style="color:var(--faint);"></i>
+      </div>
+    </div>
+    ${expanded ? `<div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:5px;">${g.items.map((it) => missingFileRowHTML(g.subject, it)).join("")}</div>` : ""}
+  </div>`;
+}
+function missingSectionHTML() {
+  const groups = missingFilesBySubject();
+  const totalMissing = groups.reduce((n, g) => n + g.items.length, 0);
+  return `
+  <div class="dash-card" style="padding:18px; margin-bottom:20px;">
+    <div class="row-between" style="margin-bottom:${groups.length ? "14px" : "0"};">
+      <div style="font-weight:800; font-size:16px;">الناقص عليك</div>
+      ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} ملف</span>` : ""}
+    </div>
+    ${
+      groups.length === 0
+        ? `<div class="empty-state compact">مفيش ملفات ناقصة — كل حاجة مسجّلة كمكتملة 🎉</div>`
+        : groups.map(missingSubjectGroupHTML).join("")
+    }
+  </div>`;
 }
 function overallStats() {
   let allFiles = [];
@@ -1899,43 +1966,30 @@ function renderHome() {
       }
     </div>
 
-    <div class="dash-card" style="padding:20px; margin-bottom:20px;">
-      <div class="row-between" style="margin-bottom:16px;">
-        <div style="font-weight:800; font-size:15px;">تقدم المهام الحالية</div>
-        <button onclick="openModal({type:'import'})" class="btn-ghost btn-sm row">
-          <i data-lucide="plus" class="ico-13"></i> استيراد ملف كمهمة
-        </button>
-      </div>
-      <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
-        <div style="display:flex; align-items:center; gap:16px;">
-          ${ringHTML(t.pct, "var(--accent)", 88, 9)}
-          <div>
-            <div style="color:var(--muted); font-size:13px; margin-bottom:2px;">نسبة إنجاز المهام الحالية</div>
-            <div style="font-size:26px; font-weight:800;">${t.pct}%</div>
-          </div>
-        </div>
-        <div style="width:1px; align-self:stretch; background:var(--border);"></div>
-        <div style="display:flex; gap:22px; flex-wrap:wrap;">
-          <div><div class="t-muted">مكتملة</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--success);">${t.done}</div></div>
-          <div><div class="t-muted">متبقية</div><div class="mono" style="font-size:22px; font-weight:600; color:var(--warning);">${t.remaining}</div></div>
-          <div><div class="t-muted">إجمالي المهام</div><div class="mono" style="font-size:22px; font-weight:600;">${t.total}</div></div>
-        </div>
-      </div>
-    </div>
+    ${missingSectionHTML()}
 
     <div class="dash-card" style="padding:18px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
-        <div style="font-weight:800; font-size:16px;">المهام</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:10px;">
+        <div style="font-weight:800; font-size:16px;">مهامي المختارة</div>
         <button onclick="openModal({type:'import'})" class="btn-primary" style="display:flex; align-items:center; gap:6px;">
           <i data-lucide="plus" class="ico-15"></i> استيراد ملف كمهمة
         </button>
       </div>
+      ${
+        t.total > 0
+          ? `<div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:14px; font-size:13px;">
+        <div><span class="t-muted">إجمالي</span> <span class="mono" style="font-weight:700;">${t.total}</span></div>
+        <div><span class="t-muted">خلصتها</span> <span class="mono" style="font-weight:700; color:var(--success);">${t.done}</span></div>
+        <div><span class="t-muted">متبقية</span> <span class="mono" style="font-weight:700; color:var(--warning);">${t.remaining}</span></div>
+      </div>`
+          : ""
+      }
 
       ${
         state.tasks.length === 0
           ? `
         <div style="text-align:center; color:var(--faint); padding:50px 20px; border:1.5px dashed var(--border); border-radius:12px;">
-          <div style="font-size:13.5px;">لا توجد مهام بعد — دوس "استيراد ملف كمهمة" واختار ملف من قسم الملفات والمواد</div>
+          <div style="font-size:13.5px;">لسه ما اخترتش مهام — ضيف من "الناقص عليك" فوق، أو دوس "استيراد ملف كمهمة"</div>
         </div>
       `
           : `
