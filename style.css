@@ -764,3 +764,26 @@ textarea.field-input {
   align-items: center;
   gap: 8px;
 }
+
+/* --- drag-and-drop reordering handle (files & folders in the explorer) --- */
+.drag-handle {
+  color: var(--faint);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 4px;
+  border-radius: 6px;
+}
+.drag-handle:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+.drag-over {
+  border-color: var(--accent) !important;
+  background: var(--accent-soft);
+}

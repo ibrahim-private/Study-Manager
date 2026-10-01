@@ -323,6 +323,52 @@ function findFolderPathIds(folders, targetId, trail) {
   }
   return null;
 }
+
+/* ---------------- drag-and-drop reordering (same-container only — not a move) ----------------
+   Reorders siblings within the exact same parent: files within one folder, or folders within
+   one parent (another folder, or a subject's root). Moving an item to a *different* folder/subject
+   is a separate, deliberate action — the existing "move" button/modal — so a drop is only honoured
+   when subjectId+parentId match the dragged item's own; otherwise it's silently ignored. */
+let dragState = null; // {type:'file'|'folder', subjectId, parentId, id} — parentId: containing folder id for files; parent folder id, or null for the subject root, for folders
+function onRowDragStart(e, type, subjectId, parentId, id) {
+  dragState = { type, subjectId, parentId, id };
+  e.dataTransfer.effectAllowed = "move";
+  try {
+    e.dataTransfer.setData("text/plain", id); // Firefox refuses to start a drag without this
+  } catch (err) {}
+}
+function onRowDragOver(e, type, subjectId, parentId, targetId) {
+  const d = dragState;
+  if (!d || d.type !== type || d.subjectId !== subjectId || d.parentId !== parentId || d.id === targetId) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  e.currentTarget.classList.add("drag-over");
+}
+function onRowDragLeave(e) {
+  e.currentTarget.classList.remove("drag-over");
+}
+function onRowDragEnd() {
+  dragState = null;
+  document.querySelectorAll(".drag-over").forEach((el) => el.classList.remove("drag-over"));
+}
+function onRowDrop(e, type, subjectId, parentId, targetId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove("drag-over");
+  const d = dragState;
+  dragState = null;
+  if (!d || d.type !== type || d.subjectId !== subjectId || d.parentId !== parentId || d.id === targetId) return;
+  const subj = getSubject(subjectId);
+  const container = type === "folder" ? (parentId ? getFolder(subj, parentId) : subj) : getFolder(subj, parentId);
+  const arr = container && (type === "folder" ? container.folders : container.files);
+  if (!arr) return;
+  const from = arr.findIndex((x) => x.id === d.id);
+  const to = arr.findIndex((x) => x.id === targetId);
+  if (from === -1 || to === -1) return;
+  const [item] = arr.splice(from, 1);
+  arr.splice(to, 0, item);
+  saveData();
+  render();
+}
 function goToFileInExplorer(subjectId, folderId, fileId) {
   const subj = getSubject(subjectId);
   if (!subj) return;
@@ -2206,7 +2252,7 @@ function renderFolderLevel(subj) {
             const done = files.filter((x) => x.done).length;
             const subCount = (f.folders || []).length;
             return `
-          <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="${state.selectionMode ? `toggleSelectItem('folder','${subj.id}','${f.id}')` : `openFolder('${f.id}')`}">
+          <div class="folder-card" style="border:1px solid var(--border-soft); border-radius:13px; padding:16px; cursor:pointer; position:relative;" onclick="${state.selectionMode ? `toggleSelectItem('folder','${subj.id}','${f.id}')` : `openFolder('${f.id}')`}" ${state.selectionMode ? "" : `ondragover="onRowDragOver(event,'folder','${subj.id}',${folder ? `'${folder.id}'` : "null"},'${f.id}')" ondragleave="onRowDragLeave(event)" ondrop="onRowDrop(event,'folder','${subj.id}',${folder ? `'${folder.id}'` : "null"},'${f.id}')"`}>
             ${
               state.selectionMode
                 ? `<div class="sel-check" data-checked="${isSelected("folder", subj.id, f.id)}" style="position:absolute; top:6px; right:6px; z-index:2;">
@@ -2222,6 +2268,9 @@ function renderFolderLevel(subj) {
               <button onclick="event.stopPropagation(); deleteFolder('${subj.id}','${f.id}')" title="حذف الفولدر" style="background:none; border:none; color:var(--faint); cursor:pointer; padding:4px;">
                 <i data-lucide="x" class="ico-13"></i>
               </button>
+            </div>
+            <div class="drag-handle" draggable="true" title="اسحب لإعادة الترتيب" onclick="event.stopPropagation()" ondragstart="onRowDragStart(event,'folder','${subj.id}',${folder ? `'${folder.id}'` : "null"},'${f.id}')" ondragend="onRowDragEnd(event)" style="position:absolute; bottom:8px; left:8px;">
+              <i data-lucide="grip-vertical" class="ico-13"></i>
             </div>`
             }
             ${folderIconSVG(subj.color, 30)}
@@ -2258,7 +2307,7 @@ function renderFileRow(subj, folder, f) {
   const grade = categoryIsTest(cat) ? gradeForFile(f.id) : null;
   const gradePct = grade ? gradeItemPct(grade) : null;
   return `
-  <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}">
+  <div id="file-row-${f.id}" class="file-row" style="display:flex; align-items:flex-start; gap:12px; padding:11px 12px; border:1px solid var(--border-soft); border-radius:11px; ${f.done ? "opacity:0.6;" : ""}" ${state.selectionMode ? "" : `ondragover="onRowDragOver(event,'file','${subj.id}','${folder.id}','${f.id}')" ondragleave="onRowDragLeave(event)" ondrop="onRowDrop(event,'file','${subj.id}','${folder.id}','${f.id}')"`}>
     ${
       state.selectionMode
         ? `<div class="sel-check" data-checked="${isSelected("file", subj.id, folder.id, f.id)}" onclick="toggleSelectItem('file','${subj.id}','${folder.id}','${f.id}')" style="margin-top:1px;">
@@ -2304,6 +2353,13 @@ function renderFileRow(subj, folder, f) {
         <i data-lucide="trash-2" class="ico-14"></i>
       </button>
     </div>
+    ${
+      state.selectionMode
+        ? ""
+        : `<div class="drag-handle" draggable="true" title="اسحب لإعادة الترتيب" onclick="event.stopPropagation()" ondragstart="onRowDragStart(event,'file','${subj.id}','${folder.id}','${f.id}')" ondragend="onRowDragEnd(event)" style="margin-top:1px;">
+      <i data-lucide="grip-vertical" class="ico-14"></i>
+    </div>`
+    }
   </div>`;
 }
 
