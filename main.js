@@ -500,6 +500,48 @@ function missingFilesBySubject() {
     })
     .filter((g) => g.items.length > 0);
 }
+
+// Plain-text message for sharing outside the app (WhatsApp/notes/etc.) — same grouping as the
+// screen: subject (root folder) -> missing file titles, nothing else (no IDs, no links/notes).
+function buildMissingReportText() {
+  const groups = missingFilesBySubject();
+  if (!groups.length) return "مفيش حاجة ناقصة عليك دلوقتي 🎉";
+  const lines = ["الناقص عليّ:"];
+  groups.forEach((g) => {
+    lines.push("", `${g.subject.name} (${g.items.length}):`);
+    g.items.forEach((it) => lines.push(`- ${it.file.title}`));
+  });
+  return lines.join("\n");
+}
+async function copyMissingReport() {
+  const text = buildMissingReportText();
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    ok = true;
+  } catch (e) {
+    // clipboard API can be blocked (insecure context / permissions) — fall back to a hidden textarea
+    try {
+      const tmp = document.createElement("textarea");
+      tmp.value = text;
+      tmp.style.position = "fixed";
+      tmp.style.opacity = "0";
+      document.body.appendChild(tmp);
+      tmp.select();
+      ok = document.execCommand("copy");
+      document.body.removeChild(tmp);
+    } catch (e2) {
+      ok = false;
+    }
+  }
+  const label = document.getElementById("missing-copy-label");
+  if (!label) return;
+  label.textContent = ok ? "اتنسخ ✓" : "معرفتش أنسخ";
+  setTimeout(() => {
+    const l = document.getElementById("missing-copy-label");
+    if (l) l.textContent = "نسخ كرسالة";
+  }, 2000);
+}
 function toggleMissingSubject(subjectId) {
   state.missingExpandedSubjects[subjectId] = !state.missingExpandedSubjects[subjectId];
   render();
@@ -540,7 +582,12 @@ function missingSectionHTML() {
   <div class="dash-card" style="padding:18px; margin-bottom:20px;">
     <div class="row-between" style="margin-bottom:${groups.length ? "14px" : "0"};">
       <div style="font-weight:800; font-size:16px;">الناقص عليك</div>
-      ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} ملف</span>` : ""}
+      <div class="row-8">
+        ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} ملف</span>` : ""}
+        <button id="missing-copy-btn" class="btn-ghost btn-xs row" onclick="copyMissingReport()">
+          <i data-lucide="copy" class="ico-12"></i> <span id="missing-copy-label">نسخ كرسالة</span>
+        </button>
+      </div>
     </div>
     ${
       groups.length === 0
