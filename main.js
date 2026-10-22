@@ -76,6 +76,7 @@ let state = {
   selectionMode: false, // explorer multi-select toggle
   selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
   clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
+  fileGroups: [], // {id, name, members:[{subjectId,folderId,fileId}]} — files linked as one logical task for "الناقص عليك"
   settingsPwBusy: false,
   settingsPwMsg: "",
   settingsPwMsgType: "error", // 'error' | 'success' — filters the "المهام" list on the home screen
@@ -195,6 +196,7 @@ function saveData() {
     mistakeTypes: state.mistakeTypes,
     mistakes: state.mistakes,
     grades: state.grades,
+    fileGroups: state.fileGroups,
   };
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -491,11 +493,29 @@ function missingFilesBySubject() {
   const excludedNames = new Set(state.categories.filter((c) => c.countsInOverall === false).map((c) => c.name));
   const taskKey = (subjectId, folderId, fileId) => `${subjectId}|${folderId}|${fileId}`;
   const taskKeys = new Set(state.tasks.map((t) => taskKey(t.subjectId, t.folderId, t.fileId)));
+  // fileId -> the group it belongs to (a file is in at most one group, enforced in createFileGroup())
+  const fileIdToGroup = {};
+  (state.fileGroups || []).forEach((grp) => grp.members.forEach((mem) => (fileIdToGroup[mem.fileId] = grp)));
   return state.subjects
     .map((subj) => {
-      const items = subjectAllFilesWithFolder(subj)
+      const rawItems = subjectAllFilesWithFolder(subj)
         .filter(({ file }) => !file.done && !(file.category && excludedNames.has(file.category)))
         .map(({ folder, file }) => ({ folder, file, inTasks: taskKeys.has(taskKey(subj.id, folder.id, file.id)) }));
+      // Grouped files collapse into one entry representing the whole group. A group that has no
+      // missing members left in this subject just isn't added — same as any other finished file.
+      const seenGroupIds = new Set();
+      const items = [];
+      rawItems.forEach((it) => {
+        const grp = fileIdToGroup[it.file.id];
+        if (!grp) {
+          items.push(it);
+          return;
+        }
+        if (seenGroupIds.has(grp.id)) return;
+        seenGroupIds.add(grp.id);
+        const members = rawItems.filter((x) => fileIdToGroup[x.file.id] === grp);
+        items.push({ fileGroup: grp, members, inTasks: members.every((x) => x.inTasks) });
+      });
       return { subject: subj, items };
     })
     .filter((g) => g.items.length > 0);
@@ -509,7 +529,14 @@ function buildMissingReportText() {
   const lines = ["الناقص عليّ:"];
   groups.forEach((g) => {
     lines.push("", `${g.subject.name} (${g.items.length}):`);
-    g.items.forEach((it) => lines.push(`- ${it.file.title}`));
+    g.items.forEach((it) => {
+      if (it.fileGroup) {
+        const label = it.fileGroup.name || it.members[0].file.title;
+        lines.push(`- ${label} (${it.members.map((m) => m.file.title).join("، ")})`);
+      } else {
+        lines.push(`- ${it.file.title}`);
+      }
+    });
   });
   return lines.join("\n");
 }
@@ -558,6 +585,30 @@ function missingFileRowHTML(subj, it) {
     }
   </div>`;
 }
+function missingGroupRowHTML(subj, entry) {
+  const { fileGroup, members, inTasks } = entry;
+  const label = fileGroup.name || members[0].file.title;
+  const sub = members.map((m) => m.file.title).join("، ");
+  return `
+  <div class="import-row" style="border:1px solid var(--border-soft); align-items:flex-start;">
+    <div class="grow" style="font-size:13px; min-width:0;">
+      <div class="row-8">
+        <i data-lucide="link-2" class="ico-12" style="color:var(--accent); flex-shrink:0;"></i>
+        <span class="truncate" style="font-weight:600;">${esc(label)}</span>
+        <span class="t-faint-sm nowrap">${members.length} ملفات</span>
+      </div>
+      <div class="t-faint-sm truncate" style="margin-top:2px;">${esc(sub)}</div>
+    </div>
+    <div class="row" style="flex-shrink:0;">
+      ${
+        inTasks
+          ? `<span class="t-faint-sm row" style="gap:4px;"><i data-lucide="check" class="ico-12"></i> في مهامي</span>`
+          : `<button class="btn-ghost btn-xs" onclick="addGroupToTasks('${subj.id}','${fileGroup.id}')">أضف لمهامي</button>`
+      }
+      <button class="icon-btn" title="فك التجميع" onclick="ungroupFiles('${fileGroup.id}')"><i data-lucide="unlink" class="ico-13"></i></button>
+    </div>
+  </div>`;
+}
 function missingSubjectGroupHTML(g) {
   const expanded = !!state.missingExpandedSubjects[g.subject.id];
   return `
@@ -572,7 +623,7 @@ function missingSubjectGroupHTML(g) {
         <i data-lucide="${expanded ? "chevron-up" : "chevron-down"}" class="ico-14" style="color:var(--faint);"></i>
       </div>
     </div>
-    ${expanded ? `<div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:5px;">${g.items.map((it) => missingFileRowHTML(g.subject, it)).join("")}</div>` : ""}
+    ${expanded ? `<div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:5px;">${g.items.map((it) => (it.fileGroup ? missingGroupRowHTML(g.subject, it) : missingFileRowHTML(g.subject, it))).join("")}</div>` : ""}
   </div>`;
 }
 function missingSectionHTML() {
@@ -583,7 +634,7 @@ function missingSectionHTML() {
     <div class="row-between" style="margin-bottom:${groups.length ? "14px" : "0"};">
       <div style="font-weight:800; font-size:16px;">الناقص عليك</div>
       <div class="row-8">
-        ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} ملف</span>` : ""}
+        ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} بند</span>` : ""}
         <button id="missing-copy-btn" class="btn-ghost btn-xs row" onclick="copyMissingReport()">
           <i data-lucide="copy" class="ico-12"></i> <span id="missing-copy-label">نسخ كرسالة</span>
         </button>
@@ -1455,6 +1506,92 @@ function removeTask(taskId) {
   saveData();
   render();
 }
+
+/* ---------------- file groups ("جروب") — link several files as one logical task ----------------
+   A group doesn't move or copy files anywhere; it's just a list of {subjectId,folderId,fileId}
+   references. A file belongs to at most one group. This only changes how "الناقص عليك" on the
+   home screen presents still-missing files — every other count (subject/folder progress bars,
+   overallStats) keeps counting files individually, untouched. */
+function openGroupSelected() {
+  if (state.selectedItems.length < 2 || !state.selectedItems.every((it) => it.type === "file")) return;
+  openModal({ type: "group-files", items: state.selectedItems.slice() });
+}
+function createFileGroup(items, name) {
+  const members = (items || []).filter((it) => it.type === "file").map((it) => ({ subjectId: it.subjectId, folderId: it.folderId, fileId: it.fileId }));
+  if (members.length < 2) {
+    closeModal();
+    return;
+  }
+  const memberIds = new Set(members.map((m) => m.fileId));
+  // a file can only belong to one group at a time — drop it from any group it was already in
+  state.fileGroups = (state.fileGroups || [])
+    .map((g) => ({ ...g, members: g.members.filter((m) => !memberIds.has(m.fileId)) }))
+    .filter((g) => g.members.length > 0);
+  state.fileGroups.push({ id: uid(), name: name || "", members });
+  saveData();
+  state.selectedItems = [];
+  state.selectionMode = false;
+  closeModal();
+  render();
+}
+function confirmGroupFiles() {
+  const m = state.modal;
+  if (!m || m.type !== "group-files") return;
+  const nameInput = document.getElementById("group-name-input");
+  createFileGroup(m.items, nameInput ? nameInput.value.trim() : "");
+}
+function ungroupFiles(groupId) {
+  state.fileGroups = (state.fileGroups || []).filter((g) => g.id !== groupId);
+  saveData();
+  render();
+}
+// Adds every still-missing member of a group, within one subject, to "مهامي المختارة" in a single
+// save+render (unlike clicking importTask() per file, which would re-render on every click).
+function addGroupToTasks(subjectId, groupId) {
+  const grp = (state.fileGroups || []).find((g) => g.id === groupId);
+  if (!grp) return;
+  const existing = new Set(state.tasks.map((t) => `${t.subjectId}|${t.folderId}|${t.fileId}`));
+  grp.members
+    .filter((m) => m.subjectId === subjectId)
+    .forEach((m) => {
+      const subj = getSubject(m.subjectId);
+      const folder = subj && getFolder(subj, m.folderId);
+      const file = folder && folder.files.find((f) => f.id === m.fileId);
+      if (!file || file.done) return;
+      const key = `${m.subjectId}|${m.folderId}|${m.fileId}`;
+      if (existing.has(key)) return;
+      state.tasks.push({ id: uid(), subjectId: m.subjectId, folderId: m.folderId, fileId: m.fileId });
+      existing.add(key);
+    });
+  saveData();
+  render();
+}
+function renderGroupFilesModal(m) {
+  const titles = (m.items || [])
+    .map((it) => {
+      const subj = getSubject(it.subjectId);
+      const folder = subj && getFolder(subj, it.folderId);
+      const file = folder && folder.files.find((f) => f.id === it.fileId);
+      return file ? file.title : null;
+    })
+    .filter(Boolean);
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:420px; padding:22px;">
+      <div class="modal-title modal-title-tight">جمع الملفات كجروب</div>
+      <div class="modal-subtitle">${titles.length} ملف هيتجمعوا ويظهروا كأنهم مهمة واحدة في "الناقص عليك"</div>
+      <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:16px; max-height:160px; overflow-y:auto;">
+        ${titles.map((t) => `<div class="t-muted truncate" style="font-size:13px;">• ${esc(t)}</div>`).join("")}
+      </div>
+      <label class="field-label">اسم الجروب (اختياري)</label>
+      <input id="group-name-input" type="text" class="field-input" placeholder="مثلاً: مراجعة الفصل الأول" style="margin-bottom:20px;">
+      <div class="modal-actions">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-primary" onclick="confirmGroupFiles()">تم الجمع</button>
+      </div>
+    </div>
+  </div>`;
+}
 function setTaskFilter(f) {
   state.taskFilter = f;
   render();
@@ -1632,6 +1769,13 @@ function renderSelectionBar() {
     <button onclick="openMoveSelected()" class="btn-primary" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
       <i data-lucide="move" class="ico-14"></i> نقل
     </button>
+    ${
+      state.selectedItems.length >= 2 && state.selectedItems.every((it) => it.type === "file")
+        ? `<button onclick="openGroupSelected()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
+      <i data-lucide="link-2" class="ico-14"></i> جروب
+    </button>`
+        : ""
+    }
     <button onclick="cutSelection()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
       <i data-lucide="scissors" class="ico-14"></i> قص
     </button>
@@ -2600,6 +2744,7 @@ function renderModal() {
   if (m.type === "platform-edit") return renderPlatformModal(m);
   if (m.type === "link-subjects") return renderLinkSubjectsModal();
   if (m.type === "history-edit") return renderHistoryEditModal(m);
+  if (m.type === "group-files") return renderGroupFilesModal(m);
   return "";
 }
 
