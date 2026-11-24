@@ -20,6 +20,39 @@ function isTestFile(f) {
   const cat = state.categories.find((c) => c.name === f.category);
   return categoryIsTest(cat);
 }
+
+/* ---------------- durations ("ساعة" on a category) ----------------
+   A category can be flagged hasDuration (clock pill in إدارة التصنيفات). Files in such a category
+   get a duration, stored as file.durationMin (whole minutes; 0 / missing = not set). */
+function categoryHasDuration(cat) {
+  return !!(cat && cat.hasDuration);
+}
+// minutes a file contributes to time totals: its own duration, but only while its category still has the clock on
+function fileDurationMin(f) {
+  if (!f || !(f.durationMin > 0)) return 0;
+  const cat = state.categories.find((c) => c.name === f.category);
+  return categoryHasDuration(cat) ? f.durationMin : 0;
+}
+// short form for chips: "1س 30د" / "45د" / "2س"
+function formatDurationShort(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return [h ? `${h}س` : "", m ? `${m}د` : ""].filter(Boolean).join(" ");
+}
+// long Arabic form for the copied message: "ساعة ونصف" style is avoided on purpose — exact numbers read better
+function arPlural(n, one, two, few, many) {
+  if (n === 1) return one;
+  if (n === 2) return two;
+  return n >= 3 && n <= 10 ? `${n} ${few}` : `${n} ${many}`;
+}
+function formatDurationLong(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const parts = [];
+  if (h) parts.push(arPlural(h, "ساعة", "ساعتين", "ساعات", "ساعة"));
+  if (m) parts.push(arPlural(m, "دقيقة", "دقيقتين", "دقائق", "دقيقة"));
+  return parts.join(" و");
+}
 const DEFAULT_MISTAKE_TYPES = [
   { id: "mt-rush", name: "تسرع", color: "#F2795B" },
   { id: "mt-focus", name: "قلة تركيز", color: "#EF4444" },
@@ -76,7 +109,6 @@ let state = {
   selectionMode: false, // explorer multi-select toggle
   selectedItems: [], // [{type:'file', subjectId, folderId, fileId} | {type:'folder', subjectId, folderId}]
   clipboard: null, // array of selected-item shapes, staged by "قص" until "لصق"
-  fileGroups: [], // {id, name, members:[{subjectId,folderId,fileId}]} — files linked as one logical task for "الناقص عليك"
   settingsPwBusy: false,
   settingsPwMsg: "",
   settingsPwMsgType: "error", // 'error' | 'success' — filters the "المهام" list on the home screen
@@ -196,7 +228,6 @@ function saveData() {
     mistakeTypes: state.mistakeTypes,
     mistakes: state.mistakes,
     grades: state.grades,
-    fileGroups: state.fileGroups,
   };
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -493,29 +524,11 @@ function missingFilesBySubject() {
   const excludedNames = new Set(state.categories.filter((c) => c.countsInOverall === false).map((c) => c.name));
   const taskKey = (subjectId, folderId, fileId) => `${subjectId}|${folderId}|${fileId}`;
   const taskKeys = new Set(state.tasks.map((t) => taskKey(t.subjectId, t.folderId, t.fileId)));
-  // fileId -> the group it belongs to (a file is in at most one group, enforced in createFileGroup())
-  const fileIdToGroup = {};
-  (state.fileGroups || []).forEach((grp) => grp.members.forEach((mem) => (fileIdToGroup[mem.fileId] = grp)));
   return state.subjects
     .map((subj) => {
-      const rawItems = subjectAllFilesWithFolder(subj)
+      const items = subjectAllFilesWithFolder(subj)
         .filter(({ file }) => !file.done && !(file.category && excludedNames.has(file.category)))
         .map(({ folder, file }) => ({ folder, file, inTasks: taskKeys.has(taskKey(subj.id, folder.id, file.id)) }));
-      // Grouped files collapse into one entry representing the whole group. A group that has no
-      // missing members left in this subject just isn't added — same as any other finished file.
-      const seenGroupIds = new Set();
-      const items = [];
-      rawItems.forEach((it) => {
-        const grp = fileIdToGroup[it.file.id];
-        if (!grp) {
-          items.push(it);
-          return;
-        }
-        if (seenGroupIds.has(grp.id)) return;
-        seenGroupIds.add(grp.id);
-        const members = rawItems.filter((x) => fileIdToGroup[x.file.id] === grp);
-        items.push({ fileGroup: grp, members, inTasks: members.every((x) => x.inTasks) });
-      });
       return { subject: subj, items };
     })
     .filter((g) => g.items.length > 0);
@@ -523,21 +536,28 @@ function missingFilesBySubject() {
 
 // Plain-text message for sharing outside the app (WhatsApp/notes/etc.) — same grouping as the
 // screen: subject (root folder) -> missing file titles, nothing else (no IDs, no links/notes).
+function subjectMissingMinutes(g) {
+  return g.items.reduce((n, it) => n + fileDurationMin(it.file), 0);
+}
+function missingTotalMinutes(groups) {
+  return groups.reduce((n, g) => n + subjectMissingMinutes(g), 0);
+}
 function buildMissingReportText() {
   const groups = missingFilesBySubject();
   if (!groups.length) return "مفيش حاجة ناقصة عليك دلوقتي 🎉";
   const lines = ["الناقص عليّ:"];
   groups.forEach((g) => {
-    lines.push("", `${g.subject.name} (${g.items.length}):`);
+    const subjMin = subjectMissingMinutes(g);
+    lines.push("", `${g.subject.name} (${g.items.length})${subjMin ? ` — ${formatDurationLong(subjMin)}` : ""}:`);
     g.items.forEach((it) => {
-      if (it.fileGroup) {
-        const label = it.fileGroup.name || it.members[0].file.title;
-        lines.push(`- ${label} (${it.members.map((m) => m.file.title).join("، ")})`);
-      } else {
-        lines.push(`- ${it.file.title}`);
-      }
+      const m = fileDurationMin(it.file);
+      lines.push(`- ${it.file.title}${m ? ` — ${formatDurationLong(m)}` : ""}`);
     });
   });
+  const totalMin = missingTotalMinutes(groups);
+  if (totalMin) {
+    lines.push("", `إجمالي الوقت المتوقع: ${formatDurationLong(totalMin)} (للمهام اللي ليها مدة بس)`);
+  }
   return lines.join("\n");
 }
 async function copyMissingReport() {
@@ -578,35 +598,12 @@ function missingFileRowHTML(subj, it) {
   return `
   <div class="import-row" style="border:1px solid var(--border-soft);">
     <div class="grow truncate" style="font-size:13px;">${esc(file.title)} <span class="t-faint-sm">${esc(folder.name)}</span></div>
+    ${durationChipHTML(file)}
     ${
       inTasks
         ? `<span class="t-faint-sm row" style="gap:4px; flex-shrink:0;"><i data-lucide="check" class="ico-12"></i> في مهامي</span>`
         : `<button class="btn-ghost btn-xs" style="flex-shrink:0;" onclick="importTask('${subj.id}','${folder.id}','${file.id}')">أضف لمهامي</button>`
     }
-  </div>`;
-}
-function missingGroupRowHTML(subj, entry) {
-  const { fileGroup, members, inTasks } = entry;
-  const label = fileGroup.name || members[0].file.title;
-  const sub = members.map((m) => m.file.title).join("، ");
-  return `
-  <div class="import-row" style="border:1px solid var(--border-soft); align-items:flex-start;">
-    <div class="grow" style="font-size:13px; min-width:0;">
-      <div class="row-8">
-        <i data-lucide="link-2" class="ico-12" style="color:var(--accent); flex-shrink:0;"></i>
-        <span class="truncate" style="font-weight:600;">${esc(label)}</span>
-        <span class="t-faint-sm nowrap">${members.length} ملفات</span>
-      </div>
-      <div class="t-faint-sm truncate" style="margin-top:2px;">${esc(sub)}</div>
-    </div>
-    <div class="row" style="flex-shrink:0;">
-      ${
-        inTasks
-          ? `<span class="t-faint-sm row" style="gap:4px;"><i data-lucide="check" class="ico-12"></i> في مهامي</span>`
-          : `<button class="btn-ghost btn-xs" onclick="addGroupToTasks('${subj.id}','${fileGroup.id}')">أضف لمهامي</button>`
-      }
-      <button class="icon-btn" title="فك التجميع" onclick="ungroupFiles('${fileGroup.id}')"><i data-lucide="unlink" class="ico-13"></i></button>
-    </div>
   </div>`;
 }
 function missingSubjectGroupHTML(g) {
@@ -623,18 +620,20 @@ function missingSubjectGroupHTML(g) {
         <i data-lucide="${expanded ? "chevron-up" : "chevron-down"}" class="ico-14" style="color:var(--faint);"></i>
       </div>
     </div>
-    ${expanded ? `<div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:5px;">${g.items.map((it) => (it.fileGroup ? missingGroupRowHTML(g.subject, it) : missingFileRowHTML(g.subject, it))).join("")}</div>` : ""}
+    ${expanded ? `<div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:5px;">${g.items.map((it) => missingFileRowHTML(g.subject, it)).join("")}</div>` : ""}
   </div>`;
 }
 function missingSectionHTML() {
   const groups = missingFilesBySubject();
   const totalMissing = groups.reduce((n, g) => n + g.items.length, 0);
+  const totalMin = missingTotalMinutes(groups);
   return `
   <div class="dash-card" style="padding:18px; margin-bottom:20px;">
     <div class="row-between" style="margin-bottom:${groups.length ? "14px" : "0"};">
       <div style="font-weight:800; font-size:16px;">الناقص عليك</div>
       <div class="row-8">
-        ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} بند</span>` : ""}
+        ${totalMin ? `<span class="t-muted-sm row" style="gap:4px;" title="إجمالي مدة المهام اللي ليها مدة"><i data-lucide="clock" class="ico-12"></i> ${formatDurationShort(totalMin)}</span>` : ""}
+        ${totalMissing ? `<span class="mono t-muted-sm">${totalMissing} ملف</span>` : ""}
         <button id="missing-copy-btn" class="btn-ghost btn-xs row" onclick="copyMissingReport()">
           <i data-lucide="copy" class="ico-12"></i> <span id="missing-copy-label">نسخ كرسالة</span>
         </button>
@@ -819,6 +818,12 @@ function subjectIconHTML(subj, size) {
     return `<img src="${esc(plat.logoUrl)}" alt="${esc(plat.name)}" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:5px;flex-shrink:0;" onerror="this.style.display='none'">`;
   }
   return folderIconSVG(subj.color, size);
+}
+// small "🕐 1س 30د" chip; empty when the file has no (active) duration
+function durationChipHTML(file) {
+  const min = fileDurationMin(file);
+  if (!min) return "";
+  return `<span class="t-faint-sm row" style="gap:3px; flex-shrink:0;" title="مدة المهمة"><i data-lucide="clock" class="ico-11"></i> ${formatDurationShort(min)}</span>`;
 }
 function categoryBadgeHTML(cat, subj) {
   const catColor = getCategoryColor(cat);
@@ -1506,92 +1511,6 @@ function removeTask(taskId) {
   saveData();
   render();
 }
-
-/* ---------------- file groups ("جروب") — link several files as one logical task ----------------
-   A group doesn't move or copy files anywhere; it's just a list of {subjectId,folderId,fileId}
-   references. A file belongs to at most one group. This only changes how "الناقص عليك" on the
-   home screen presents still-missing files — every other count (subject/folder progress bars,
-   overallStats) keeps counting files individually, untouched. */
-function openGroupSelected() {
-  if (state.selectedItems.length < 2 || !state.selectedItems.every((it) => it.type === "file")) return;
-  openModal({ type: "group-files", items: state.selectedItems.slice() });
-}
-function createFileGroup(items, name) {
-  const members = (items || []).filter((it) => it.type === "file").map((it) => ({ subjectId: it.subjectId, folderId: it.folderId, fileId: it.fileId }));
-  if (members.length < 2) {
-    closeModal();
-    return;
-  }
-  const memberIds = new Set(members.map((m) => m.fileId));
-  // a file can only belong to one group at a time — drop it from any group it was already in
-  state.fileGroups = (state.fileGroups || [])
-    .map((g) => ({ ...g, members: g.members.filter((m) => !memberIds.has(m.fileId)) }))
-    .filter((g) => g.members.length > 0);
-  state.fileGroups.push({ id: uid(), name: name || "", members });
-  saveData();
-  state.selectedItems = [];
-  state.selectionMode = false;
-  closeModal();
-  render();
-}
-function confirmGroupFiles() {
-  const m = state.modal;
-  if (!m || m.type !== "group-files") return;
-  const nameInput = document.getElementById("group-name-input");
-  createFileGroup(m.items, nameInput ? nameInput.value.trim() : "");
-}
-function ungroupFiles(groupId) {
-  state.fileGroups = (state.fileGroups || []).filter((g) => g.id !== groupId);
-  saveData();
-  render();
-}
-// Adds every still-missing member of a group, within one subject, to "مهامي المختارة" in a single
-// save+render (unlike clicking importTask() per file, which would re-render on every click).
-function addGroupToTasks(subjectId, groupId) {
-  const grp = (state.fileGroups || []).find((g) => g.id === groupId);
-  if (!grp) return;
-  const existing = new Set(state.tasks.map((t) => `${t.subjectId}|${t.folderId}|${t.fileId}`));
-  grp.members
-    .filter((m) => m.subjectId === subjectId)
-    .forEach((m) => {
-      const subj = getSubject(m.subjectId);
-      const folder = subj && getFolder(subj, m.folderId);
-      const file = folder && folder.files.find((f) => f.id === m.fileId);
-      if (!file || file.done) return;
-      const key = `${m.subjectId}|${m.folderId}|${m.fileId}`;
-      if (existing.has(key)) return;
-      state.tasks.push({ id: uid(), subjectId: m.subjectId, folderId: m.folderId, fileId: m.fileId });
-      existing.add(key);
-    });
-  saveData();
-  render();
-}
-function renderGroupFilesModal(m) {
-  const titles = (m.items || [])
-    .map((it) => {
-      const subj = getSubject(it.subjectId);
-      const folder = subj && getFolder(subj, it.folderId);
-      const file = folder && folder.files.find((f) => f.id === it.fileId);
-      return file ? file.title : null;
-    })
-    .filter(Boolean);
-  return `
-  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
-    <div class="modal-card dash-card" style="width:420px; padding:22px;">
-      <div class="modal-title modal-title-tight">جمع الملفات كجروب</div>
-      <div class="modal-subtitle">${titles.length} ملف هيتجمعوا ويظهروا كأنهم مهمة واحدة في "الناقص عليك"</div>
-      <div style="display:flex; flex-direction:column; gap:4px; margin-bottom:16px; max-height:160px; overflow-y:auto;">
-        ${titles.map((t) => `<div class="t-muted truncate" style="font-size:13px;">• ${esc(t)}</div>`).join("")}
-      </div>
-      <label class="field-label">اسم الجروب (اختياري)</label>
-      <input id="group-name-input" type="text" class="field-input" placeholder="مثلاً: مراجعة الفصل الأول" style="margin-bottom:20px;">
-      <div class="modal-actions">
-        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
-        <button class="btn-primary" onclick="confirmGroupFiles()">تم الجمع</button>
-      </div>
-    </div>
-  </div>`;
-}
 function setTaskFilter(f) {
   state.taskFilter = f;
   render();
@@ -1628,6 +1547,7 @@ function addCategory() {
     color: colorInput.value,
     isTest: false,
     countsInOverall: true,
+    hasDuration: false,
   });
   nameInput.value = "";
   saveData();
@@ -1726,6 +1646,13 @@ function toggleCategoryIsTest(id) {
   saveData();
   render();
 }
+function toggleCategoryHasDuration(id) {
+  const cat = state.categories.find((c) => c.id === id);
+  if (!cat) return;
+  cat.hasDuration = !categoryHasDuration(cat);
+  saveData();
+  render();
+}
 function toggleCategoryCountsInOverall(id) {
   const cat = state.categories.find((c) => c.id === id);
   if (!cat) return;
@@ -1769,13 +1696,6 @@ function renderSelectionBar() {
     <button onclick="openMoveSelected()" class="btn-primary" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
       <i data-lucide="move" class="ico-14"></i> نقل
     </button>
-    ${
-      state.selectedItems.length >= 2 && state.selectedItems.every((it) => it.type === "file")
-        ? `<button onclick="openGroupSelected()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
-      <i data-lucide="link-2" class="ico-14"></i> جروب
-    </button>`
-        : ""
-    }
     <button onclick="cutSelection()" class="btn-ghost" style="display:flex; align-items:center; gap:6px; padding:8px 14px; font-size:12.5px;">
       <i data-lucide="scissors" class="ico-14"></i> قص
     </button>
@@ -1851,6 +1771,7 @@ function render() {
   `;
   if (window.lucide) lucide.createIcons();
   if (state.modal) focusModalInput();
+  if (state.modal && state.modal.type === "file") scrollDurationSelection();
   initNoteToggles();
 }
 
@@ -2276,6 +2197,7 @@ function taskRow(t) {
       <div style="font-weight:600; font-size:14px; ${file.done ? "text-decoration:line-through; text-decoration-color:var(--faint);" : ""} overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(file.title)}</div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(file.category, subj)}
+        ${durationChipHTML(file)}
         <span class="t-faint-sm">${esc(subj.name)} / ${esc(folder.name)}</span>
         ${file.link ? `<a href="${esc(file.link)}" target="_blank" rel="noopener" style="color:var(--accent); display:flex; align-items:center; gap:3px; font-size:12px; font-weight:600;"><i data-lucide="play-circle" class="ico-12"></i> ادخل الدرس</a>` : ""}
         ${file.pdfLink ? `<a href="${esc(file.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" class="ico-12"></i> PDF</a>` : ""}
@@ -2516,6 +2438,7 @@ function renderFileRow(subj, folder, f) {
       </div>
       <div style="display:flex; align-items:center; gap:8px; margin-top:5px; flex-wrap:wrap;">
         ${categoryBadgeHTML(f.category, subj)}
+        ${durationChipHTML(f)}
         ${excludedFromOverall ? `<span title="التصنيف ده مستبعد من حساب التقدم الكلي" style="font-size:10.5px; color:var(--faint); opacity:0.7; display:flex; align-items:center; gap:3px;"><i data-lucide="eye-off" style="width:10px;height:10px;"></i> غير محسوب في التقدم</span>` : ""}
         ${f.link ? `<a href="${esc(f.link)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="link-2" class="ico-12"></i> رابط الدرس</a>` : ""}
         ${f.pdfLink ? `<a href="${esc(f.pdfLink)}" target="_blank" rel="noopener" style="color:var(--muted); display:flex; align-items:center; gap:3px; font-size:12px;"><i data-lucide="file-text" class="ico-12"></i> PDF</a>` : ""}
@@ -2744,7 +2667,6 @@ function renderModal() {
   if (m.type === "platform-edit") return renderPlatformModal(m);
   if (m.type === "link-subjects") return renderLinkSubjectsModal();
   if (m.type === "history-edit") return renderHistoryEditModal(m);
-  if (m.type === "group-files") return renderGroupFilesModal(m);
   return "";
 }
 
@@ -3037,6 +2959,10 @@ function renderFileModal(m) {
   const existing = m.fileId ? getFile(folder, m.fileId) : null;
   const categories = state.categories.map((c) => c.name);
   pickedCategory = existing ? existing.category : categories[0] || null;
+  const startMin = existing && existing.durationMin > 0 ? existing.durationMin : 0;
+  pickedDurH = Math.floor(startMin / 60);
+  pickedDurM = startMin % 60;
+  const showDur = categoryHasDuration(state.categories.find((x) => x.name === pickedCategory));
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:420px; padding:22px; max-height:88vh; overflow-y:auto;">
@@ -3052,11 +2978,16 @@ function renderFileModal(m) {
             ? categories
                 .map(
                   (c) =>
-                    `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}</div>`,
+                    `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}${categoryHasDuration(state.categories.find((x) => x.name === c)) ? ' <i data-lucide="clock" class="ico-11" style="vertical-align:-2px;"></i>' : ""}</div>`,
                 )
                 .join("")
             : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي تصنيف — أضف واحد من كارت "التقدم الكلي" في الرئيسية</div>`
         }
+      </div>
+
+      <div id="dur-block" style="display:${showDur ? "block" : "none"}; margin-bottom:16px;">
+        <label class="field-label">مدة المهمة (اختياري)</label>
+        ${durationPickerHTML()}
       </div>
 
       <label class="field-label">رابط المنصة / الدرس (اختياري)</label>
@@ -3080,13 +3011,71 @@ function pickCategory(c) {
   document
     .querySelectorAll("#cat-row .cat-pill")
     .forEach((el) => el.setAttribute("data-selected", el.getAttribute("data-cat") === c ? "true" : "false"));
+  const block = document.getElementById("dur-block");
+  if (block) {
+    block.style.display = categoryHasDuration(state.categories.find((x) => x.name === c)) ? "block" : "none";
+    if (block.style.display === "block") scrollDurationSelection();
+  }
+}
+
+/* ----- duration picker: two scroll lists (hours / minutes) in the app's own pill style ----- */
+let pickedDurH = 0;
+let pickedDurM = 0;
+function durationPickerHTML() {
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const mins = Array.from({ length: 60 }, (_, i) => i);
+  const opt = (kind, v, label, sel) =>
+    `<div class="dur-opt" data-kind="${kind}" data-val="${v}" data-selected="${sel}" onclick="pickDuration('${kind}',${v})">${label}</div>`;
+  return `
+    <div class="dur-picker">
+      <div class="dur-col">
+        <div class="dur-col-label">ساعات</div>
+        <div class="dur-list" id="dur-list-h">${hours.map((v) => opt("h", v, v, v === pickedDurH)).join("")}</div>
+      </div>
+      <div class="dur-sep">:</div>
+      <div class="dur-col">
+        <div class="dur-col-label">دقائق</div>
+        <div class="dur-list" id="dur-list-m">${mins.map((v) => opt("m", v, String(v).padStart(2, "0"), v === pickedDurM)).join("")}</div>
+      </div>
+    </div>
+    <div class="row-between" style="margin-top:8px;">
+      <span id="dur-summary" class="t-muted">${durationSummaryText()}</span>
+      <span class="t-faint-sm" style="cursor:pointer;" onclick="pickDuration('clear')">مسح</span>
+    </div>`;
+}
+function durationSummaryText() {
+  const total = pickedDurH * 60 + pickedDurM;
+  return total ? `المدة: ${formatDurationLong(total)}` : "لسه ما اخترتش مدة";
+}
+function pickDuration(kind, v) {
+  if (kind === "clear") {
+    pickedDurH = 0;
+    pickedDurM = 0;
+  } else if (kind === "h") pickedDurH = v;
+  else pickedDurM = v;
+  document.querySelectorAll(".dur-opt").forEach((el) => {
+    const k = el.getAttribute("data-kind");
+    const val = Number(el.getAttribute("data-val"));
+    el.setAttribute("data-selected", String(k === "h" ? val === pickedDurH : val === pickedDurM));
+  });
+  const s = document.getElementById("dur-summary");
+  if (s) s.textContent = durationSummaryText();
+  if (kind === "clear") scrollDurationSelection();
+}
+// bring the currently selected hour/minute into view inside each list (needs the block to be visible)
+function scrollDurationSelection() {
+  ["h", "m"].forEach((k) => {
+    const list = document.getElementById(`dur-list-${k}`);
+    const sel = list && list.querySelector('.dur-opt[data-selected="true"]');
+    if (list && sel) list.scrollTop = sel.offsetTop - list.clientHeight / 2 + sel.clientHeight / 2;
+  });
 }
 function renderCategoriesModal() {
   return `
   <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
     <div class="modal-card dash-card" style="width:720px; max-width:95vw; padding:22px; max-height:88vh; display:flex; flex-direction:column;">
       <div class="modal-title modal-title-tight">إدارة التصنيفات</div>
-      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تصنيف اختبار" لأي تصنيف فيه اختبارات عايز تسجل عليه درجات وأخطاء (زي كويز أو واجب) — تلقائيًا هيظهر في "قسم الاختبارات". و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي.</div>
+      <div style="color:var(--muted); font-size:12px; margin-bottom:16px;">فعّل "تصنيف اختبار" لأي تصنيف فيه اختبارات عايز تسجل عليه درجات وأخطاء (زي كويز أو واجب) — تلقائيًا هيظهر في "قسم الاختبارات". و"يحسب في التقدم الكلي" لو عايز تستبعد تصنيف معين (زي المراجعات) من حاسبة التقدم فوق مع فضل الملفات موجودة عادي. و\"ليه مدة\" بتخلي ملفات التصنيف ده ليها وقت (ساعات ودقائق) تحدده لكل ملف، ويتجمع في رسالة \"الناقص عليك\".</div>
       ${
         state.categories.length
           ? `<div style="overflow-y:auto; flex:1; min-height:0; display:flex; flex-direction:column; gap:8px; margin:-4px -4px 18px; padding:4px;">
@@ -3102,6 +3091,9 @@ function renderCategoriesModal() {
               </div>
               <div class="cat-pill" data-selected="${c.countsInOverall !== false}" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap;" onclick="toggleCategoryCountsInOverall('${c.id}')">
                 <i data-lucide="pie-chart" class="ico-11" style="vertical-align:-2px;"></i> يحسب في التقدم الكلي
+              </div>
+              <div class="cat-pill" data-selected="${categoryHasDuration(c)}" title="الملفات في التصنيف ده ليها مدة (ساعات ودقائق)" style="font-size:11px; padding:5px 9px; flex:1; white-space:nowrap;" onclick="toggleCategoryHasDuration('${c.id}')">
+                <i data-lucide="clock" class="ico-11" style="vertical-align:-2px;"></i> ليه مدة
               </div>
             </div>
             <button onclick="openCategoryEdit('${c.id}')" title="تعديل الاسم واللون" class="icon-btn">
@@ -3867,7 +3859,9 @@ function submitFile(subjectId, folderId, fileId) {
   const link = document.getElementById("f-link").value.trim();
   const pdfLink = document.getElementById("f-pdf").value.trim();
   const note = document.getElementById("f-note").value.trim();
-  saveFile(subjectId, folderId, fileId, { title: title.trim(), category: pickedCategory, link, pdfLink, note });
+  const hasDur = categoryHasDuration(state.categories.find((x) => x.name === pickedCategory));
+  const durationMin = hasDur ? pickedDurH * 60 + pickedDurM : 0;
+  saveFile(subjectId, folderId, fileId, { title: title.trim(), category: pickedCategory, link, pdfLink, note, durationMin });
 }
 
 function renderImportModal() {

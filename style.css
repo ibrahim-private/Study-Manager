@@ -787,3 +787,64 @@ textarea.field-input {
   border-color: var(--accent) !important;
   background: var(--accent-soft);
 }
+
+/* --- duration picker (hours / minutes lists, used in the file modal for clock-enabled categories) --- */
+.dur-picker {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+.dur-col {
+  flex: 1;
+  min-width: 0;
+}
+.dur-col-label {
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--faint);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.dur-list {
+  position: relative; /* makes the list the offsetParent, so scrolling the selected option into view measures from the list itself */
+  height: 132px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px;
+}
+.dur-sep {
+  align-self: center;
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 600;
+  color: var(--faint);
+  padding-top: 18px;
+}
+.dur-opt {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 7px 0;
+  border-radius: 9px;
+  border: 1.5px solid transparent;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.dur-opt:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.dur-opt[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #fff;
+}
