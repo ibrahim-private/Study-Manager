@@ -33,6 +33,62 @@ function fileDurationMin(f) {
   const cat = state.categories.find((c) => c.name === f.category);
   return categoryHasDuration(cat) ? f.durationMin : 0;
 }
+/* ---------------- actual time ("الوقت الفعلي") ----------------
+   Optional setting. When on, completing a file whose category has the clock asks how long it really
+   took, with the same hours/minutes picker, and stores it as file.actualMin next to the planned
+   file.durationMin — the raw numbers future stats (planned vs actual, completion %) can be built on. */
+function needsActualTime(f) {
+  return !!(state.settings && state.settings.trackActualTime) && categoryHasDuration(state.categories.find((c) => c.name === f.category));
+}
+function fileActualMin(f) {
+  if (!f || !f.done || !(f.actualMin > 0)) return 0;
+  return categoryHasDuration(state.categories.find((c) => c.name === f.category)) ? f.actualMin : 0;
+}
+function toggleTrackActualTime() {
+  state.settings = { ...(state.settings || {}), trackActualTime: !(state.settings && state.settings.trackActualTime) };
+  saveData();
+  render();
+}
+function renderActualTimeModal(m) {
+  const subj = getSubject(m.subjectId);
+  const folder = subj && getFolder(subj, m.folderId);
+  const file = folder && getFile(folder, m.fileId);
+  if (!file) return "";
+  const prev = file.actualMin > 0 ? file.actualMin : 0; // re-completing a file starts from the time saved last time
+  pickedDurH = Math.floor(prev / 60);
+  pickedDurM = prev % 60;
+  const planned = fileDurationMin(file);
+  return `
+  <div class="modal-overlay" onclick="if(event.target===this) closeModal()">
+    <div class="modal-card dash-card" style="width:400px; padding:22px;">
+      <div class="modal-title modal-title-tight">الوقت الفعلي</div>
+      <div class="modal-subtitle truncate">${esc(file.title)}</div>
+      ${planned ? `<div class="t-muted" style="margin-bottom:12px;">المدة المتوقعة: ${formatDurationLong(planned)}</div>` : ""}
+      <label class="field-label">خدت قد إيه فعليًا؟</label>
+      ${durationPickerHTML()}
+      <div class="modal-actions" style="margin-top:18px; flex-wrap:wrap;">
+        <button class="btn-ghost" onclick="closeModal()">إلغاء</button>
+        <button class="btn-ghost" onclick="confirmActualTime(true)">إكمال من غير وقت</button>
+        <button class="btn-primary" onclick="confirmActualTime(false)">تأكيد وإكمال</button>
+      </div>
+    </div>
+  </div>`;
+}
+function confirmActualTime(skip) {
+  const m = state.modal;
+  if (!m || m.type !== "actual-time") return;
+  const subj = getSubject(m.subjectId);
+  const folder = subj && getFolder(subj, m.folderId);
+  const f = folder && getFile(folder, m.fileId);
+  if (!f) {
+    closeModal();
+    return;
+  }
+  const total = pickedDurH * 60 + pickedDurM;
+  if (!skip && total > 0) f.actualMin = total; // 0 chosen = nothing recorded, same as skipping
+  state.modal = null;
+  toggleFile(m.subjectId, m.folderId, m.fileId, true);
+}
 // short form for chips: "1س 30د" / "45د" / "2س"
 function formatDurationShort(min) {
   const h = Math.floor(min / 60);
@@ -98,6 +154,7 @@ let state = {
   loaded: false,
   taskFilter: "all", // 'all' | 'pending' | 'done'
   missingExpandedSubjects: {}, // subjectId -> bool, for the "الناقص عليك" accordion (session-only, not saved)
+  settings: { trackActualTime: false }, // per-account preferences, saved with the rest of the data
   categories: [], // {id, name, color, isTest, countsInOverall} — user-defined file categories
   mistakeTypes: [], // {id, name, color} — user-defined error/mistake types
   mistakes: [], // {id, typeIds, text, subjectId, folderId, fileId, createdAt}
@@ -179,6 +236,7 @@ async function loadDataForUser(uid) {
           : DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
       state.mistakes = data.mistakes || [];
       state.grades = data.grades || [];
+      state.settings = { trackActualTime: false, ...(data.settings || {}) };
     } else {
       const seed = seedData();
       state.subjects = seed.subjects;
@@ -189,6 +247,7 @@ async function loadDataForUser(uid) {
       state.mistakeTypes = seed.mistakeTypes;
       state.mistakes = seed.mistakes;
       state.grades = seed.grades;
+      state.settings = { trackActualTime: false };
       await docRef.set({
         subjects: state.subjects,
         tasks: state.tasks,
@@ -198,6 +257,7 @@ async function loadDataForUser(uid) {
         mistakeTypes: state.mistakeTypes,
         mistakes: state.mistakes,
         grades: state.grades,
+        settings: state.settings,
       });
     }
   } catch (e) {
@@ -210,6 +270,7 @@ async function loadDataForUser(uid) {
     state.mistakeTypes = DEFAULT_MISTAKE_TYPES.map((t) => ({ ...t }));
     state.mistakes = [];
     state.grades = [];
+    state.settings = { trackActualTime: false };
   }
   state.selectedSubjectId = state.subjects[0] ? state.subjects[0].id : null;
   state.folderPath = [];
@@ -228,6 +289,7 @@ function saveData() {
     mistakeTypes: state.mistakeTypes,
     mistakes: state.mistakes,
     grades: state.grades,
+    settings: state.settings,
   };
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
@@ -819,11 +881,18 @@ function subjectIconHTML(subj, size) {
   }
   return folderIconSVG(subj.color, size);
 }
-// small "🕐 1س 30د" chip; empty when the file has no (active) duration
+// small chips: planned "🕐 1س 30د", and once done with a recorded time "⏱ فعلي 1س 10د" (green if within the plan, amber if over)
 function durationChipHTML(file) {
-  const min = fileDurationMin(file);
-  if (!min) return "";
-  return `<span class="t-faint-sm row" style="gap:3px; flex-shrink:0;" title="مدة المهمة"><i data-lucide="clock" class="ico-11"></i> ${formatDurationShort(min)}</span>`;
+  const planned = fileDurationMin(file);
+  const actual = fileActualMin(file);
+  const p = planned
+    ? `<span class="t-faint-sm row" style="gap:3px; flex-shrink:0;" title="مدة المهمة"><i data-lucide="clock" class="ico-11"></i> ${formatDurationShort(planned)}</span>`
+    : "";
+  const color = !planned ? "var(--muted)" : actual <= planned ? "var(--success)" : "var(--warning)";
+  const a = actual
+    ? `<span class="t-faint-sm row" style="gap:3px; flex-shrink:0; color:${color};" title="الوقت الفعلي"><i data-lucide="timer" class="ico-11"></i> فعلي ${formatDurationShort(actual)}</span>`
+    : "";
+  return p + a;
 }
 function categoryBadgeHTML(cat, subj) {
   const catColor = getCategoryColor(cat);
@@ -1084,10 +1153,14 @@ function saveFile(subjectId, folderId, fileId, data) {
   saveData();
   closeModal();
 }
-function toggleFile(subjectId, folderId, fileId) {
+function toggleFile(subjectId, folderId, fileId, skipActualPrompt) {
   const subj = getSubject(subjectId);
   const folder = getFolder(subj, folderId);
   const f = getFile(folder, fileId);
+  if (!f.done && !skipActualPrompt && needsActualTime(f)) {
+    openModal({ type: "actual-time", subjectId, folderId, fileId });
+    return;
+  }
   f.done = !f.done;
   if (f.done) {
     recordHistory(subj, folder, f);
@@ -1663,6 +1736,10 @@ function toggleCategoryCountsInOverall(id) {
 function toggleTaskDone(t) {
   const { subj, folder, file } = resolveTask(t);
   if (!file) return;
+  if (!file.done && needsActualTime(file)) {
+    openModal({ type: "actual-time", subjectId: subj.id, folderId: folder.id, fileId: file.id });
+    return;
+  }
   file.done = !file.done;
   if (file.done) {
     recordHistory(subj, folder, file);
@@ -1771,7 +1848,7 @@ function render() {
   `;
   if (window.lucide) lucide.createIcons();
   if (state.modal) focusModalInput();
-  if (state.modal && state.modal.type === "file") scrollDurationSelection();
+  if (state.modal && (state.modal.type === "file" || state.modal.type === "actual-time")) scrollDurationSelection();
   initNoteToggles();
 }
 
@@ -1941,6 +2018,16 @@ ${
 function renderSettingsView() {
   return `
     <div style="display:flex; flex-direction:column; gap:20px; max-width:640px;">
+
+      <div class="dash-card" style="padding:18px;">
+        <div class="row-between" style="margin-bottom:10px;">
+          <div class="modal-title" style="margin-bottom:0;">الوقت الفعلي</div>
+          <div class="cat-pill" data-selected="${!!(state.settings && state.settings.trackActualTime)}" style="font-size:12px; padding:6px 12px;" onclick="toggleTrackActualTime()">
+            <i data-lucide="timer" class="ico-12" style="vertical-align:-2px;"></i> ${state.settings && state.settings.trackActualTime ? "مفعّل" : "متوقف"}
+          </div>
+        </div>
+        <div style="color:var(--muted); font-size:12.5px;">لما تكمّل ملف من تصنيف مفعّل عليه "ليه مدة"، هيظهرلك نفس اختيار الساعات والدقائق تسجّل فيه خدت قد إيه فعليًا، وتشوف بعدها المدة المتوقعة جنب الفعلية.</div>
+      </div>
 
       <div class="dash-card" style="padding:18px;">
         <div class="modal-title" style="margin-bottom:14px;">النسخة الاحتياطية</div>
@@ -2667,6 +2754,7 @@ function renderModal() {
   if (m.type === "platform-edit") return renderPlatformModal(m);
   if (m.type === "link-subjects") return renderLinkSubjectsModal();
   if (m.type === "history-edit") return renderHistoryEditModal(m);
+  if (m.type === "actual-time") return renderActualTimeModal(m);
   return "";
 }
 
