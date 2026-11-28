@@ -3047,6 +3047,8 @@ function renderFileModal(m) {
   const existing = m.fileId ? getFile(folder, m.fileId) : null;
   const categories = state.categories.map((c) => c.name);
   pickedCategory = existing ? existing.category : categories[0] || null;
+  categoryManuallyPicked = false;
+  autoPickBase = null;
   const startMin = existing && existing.durationMin > 0 ? existing.durationMin : 0;
   pickedDurH = Math.floor(startMin / 60);
   pickedDurM = startMin % 60;
@@ -3057,7 +3059,7 @@ function renderFileModal(m) {
       <div class="modal-title">${existing ? "تعديل الملف" : "ملف جديد"} <span style="color:var(--muted); font-weight:500; font-size:13px;">— ${esc(subj.name)} / ${esc(folder.name)}</span></div>
 
       <label class="field-label">اسم الملف</label>
-      <input id="f-title" class="field-input" placeholder="مثال: الدرس الثالث - الطاقة الحركية" value="${existing ? esc(existing.title) : ""}" style="margin-bottom:16px;">
+      <input id="f-title" class="field-input" oninput="autoPickCategory(this.value)" placeholder="مثال: الدرس الثالث - الطاقة الحركية" value="${existing ? esc(existing.title) : ""}" style="margin-bottom:16px;">
 
       <label class="field-label field-label-lg">التصنيف</label>
       <div id="cat-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
@@ -3066,7 +3068,7 @@ function renderFileModal(m) {
             ? categories
                 .map(
                   (c) =>
-                    `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategory('${c}')">${c}${categoryHasDuration(state.categories.find((x) => x.name === c)) ? ' <i data-lucide="clock" class="ico-11" style="vertical-align:-2px;"></i>' : ""}</div>`,
+                    `<div class="cat-pill" data-selected="${pickedCategory === c}" data-cat="${c}" style="flex:1;" onclick="pickCategoryManual('${c}')">${c}${categoryHasDuration(state.categories.find((x) => x.name === c)) ? ' <i data-lucide="clock" class="ico-11" style="vertical-align:-2px;"></i>' : ""}</div>`,
                 )
                 .join("")
             : `<div style="font-size:12.5px; color:var(--faint); border:1.5px dashed var(--border); border-radius:10px; padding:10px; width:100%; text-align:center;">لسه معملتش أي تصنيف — أضف واحد من كارت "التقدم الكلي" في الرئيسية</div>`
@@ -3105,6 +3107,53 @@ function pickCategory(c) {
     if (block.style.display === "block") scrollDurationSelection();
   }
 }
+
+/* ---------- SPOILER BLOCK: category auto-pick from the title (skip reading this if you want to solve it yourself) ---------- */
+let categoryManuallyPicked = false;
+let autoPickBase = null; // the category that was selected before an auto-pick, so it can be restored
+function pickCategoryManual(c) {
+  categoryManuallyPicked = true;
+  pickCategory(c);
+}
+function titleWords(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .map((w) => (w.length > 3 && w.startsWith("ال") ? w.slice(2) : w));
+}
+function matchCategoryFromTitle(title) {
+  const words = titleWords(title);
+  let best = null;
+  state.categories.forEach((c) => {
+    const cw = titleWords(c.name);
+    if (!cw.length) return;
+    for (let i = 0; i + cw.length <= words.length; i++) {
+      if (cw.every((w, j) => words[i + j] === w)) {
+        if (!best || i < best.pos || (i === best.pos && cw.length > best.len)) best = { name: c.name, pos: i, len: cw.length };
+        break;
+      }
+    }
+  });
+  return best ? best.name : null;
+}
+function autoPickCategory(title) {
+  const m = state.modal;
+  if (!m || m.type !== "file" || m.fileId || categoryManuallyPicked) return;
+  const name = matchCategoryFromTitle(title);
+  if (name) {
+    if (autoPickBase === null) autoPickBase = pickedCategory;
+    if (name !== pickedCategory) pickCategory(name);
+  } else if (autoPickBase !== null) {
+    if (autoPickBase !== pickedCategory) pickCategory(autoPickBase);
+    autoPickBase = null;
+  }
+}
+/* ---------- end spoiler block ---------- */
 
 /* ----- duration picker: two scroll lists (hours / minutes) in the app's own pill style ----- */
 let pickedDurH = 0;
